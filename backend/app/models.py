@@ -1,0 +1,79 @@
+from typing import Any, Optional
+from pydantic import BaseModel, Field
+
+
+# Request Models
+class RegisterRequest(BaseModel):
+    username: str = Field(
+        ...,
+        min_length=3,
+        max_length=20,
+        pattern=r"^[a-zA-Z0-9_-]+$",
+        description="Unique username containing letters, numbers, underscores, or hyphens",
+    )
+
+
+class ChatRequest(BaseModel):
+    user_id: str = Field(..., description="Unique participant ID")
+    prompt: str = Field(
+        ...,
+        max_length=1000,
+        description="Prompt payload to send to the target LLM (capped at 1000 characters)",
+    )
+
+
+class SubmitKeyRequest(BaseModel):
+    user_id: str = Field(..., description="Unique participant ID")
+    key: str = Field(..., description="Extracted secret flag key")
+
+
+# Response Models
+class RegisterResponse(BaseModel):
+    user_id: str
+    username: str
+    current_level: int = 1
+    start_time: str
+    total_prompts: int = 0
+    failed_attempts: int = 0
+    completed: bool = False
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    latency_ms: Optional[int] = None
+    cooldown_seconds: float = 3.0
+
+
+class SubmitKeyResponse(BaseModel):
+    status: str
+    unlocked_level: Optional[int] = None
+    message: str
+    penalty_points: Optional[int] = None
+    final_score: Optional[float] = None
+    completion_time: Optional[str] = None
+    stats: Optional[dict[str, Any]] = None
+
+
+class LeaderboardEntry(BaseModel):
+    rank: int
+    username: str
+    current_level: int
+    completed: bool
+    final_score: float
+    total_prompts: int
+    total_chars: int
+    duration_seconds: Optional[int] = None
+
+
+class UserStateResponse(BaseModel):
+    user_id: str
+    username: str
+    current_level: int
+    start_time: str
+    completed_at: Optional[str] = None
+    total_prompts: int = 0
+    total_chars: int = 0
+    failed_attempts: int = 0
+    final_score: float = 0.0
+    is_disqualified: bool = False
+    completed: bool = False
