@@ -42,6 +42,7 @@ class ChatResponse(BaseModel):
     reply: str
     latency_ms: Optional[int] = None
     cooldown_seconds: float = 3.0
+    status: Optional[str] = None
 
 
 class SubmitKeyResponse(BaseModel):
