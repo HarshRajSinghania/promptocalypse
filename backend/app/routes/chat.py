@@ -15,6 +15,7 @@ import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+import httpx
 import openai
 
 from app.config import Settings, get_settings
@@ -37,10 +38,12 @@ router = APIRouter(prefix="/api", tags=["chat"])
 def get_groq_client(
     settings: Annotated[Settings, Depends(get_settings)]
 ) -> openai.AsyncOpenAI:
-    """Dependency provider for Groq AsyncOpenAI client."""
+    """Dependency provider for Groq AsyncOpenAI client with explicit timeout."""
+    http_client = httpx.AsyncClient(timeout=8.0)
     return openai.AsyncOpenAI(
         base_url=settings.GROQ_BASE_URL,
         api_key=settings.GROQ_API_KEY,
+        http_client=http_client,
     )
 
 
@@ -55,51 +58,65 @@ async def chat(
     Execute a user prompt against the target LLM for their current challenge level.
 
     Processing pipeline:
-    1. Cooldown check: Reject requests arriving within < 3.0s with HTTP 429.
-    2. Session validation: Ensure participant exists and arena run is active.
-    3. Update rate limit window: Mark request timestamp for the validated user.
-    4. Level 2 Ingress Defense: Block prohibited keywords, short-circuit before Groq.
-    5. LLM Inference: Dispatch context to Groq (llama-3.1-8b-instant).
-    6. Level 3 Egress Defense: Mask secret key token leaks before dispatching reply.
-    7. Persistence: Atomically record prompt interaction and update user metrics.
+    1. Pre-flight log: Immediate trace before cooldown, validation, or inference.
+    2. Cooldown check: Reject requests arriving within < 3.0s with HTTP 429.
+    3. Session validation: Ensure participant exists and arena run is active.
+    4. Update rate limit window: Mark request timestamp for the validated user.
+    5. Level 2 Ingress Defense: Block prohibited keywords, short-circuit before Groq.
+    6. LLM Inference: Dispatch context to Groq (llama-3.1-8b-instant).
+    7. Level 3 Egress Defense: Mask secret key token leaks before dispatching reply.
+    8. Persistence: Atomically record prompt interaction and update user metrics.
     """
-    # Start total processing timer
-    total_start = time.perf_counter()
-
-    # Step 1: Cooldown check (Sliding-window rate limiter)
     try:
-        limiter.check(request.user_id)
-    except HTTPException as e:
-        logger.warning(
-            "Rate limit cooldown active for user",
+        # Pre-flight log immediately at sentence 1 before redaction, DB access, or cooldown runs
+        logger.info(
+            "chat_endpoint_hit",
             extra={
-                "event": "rate_limit_exceeded",
+                "event": "chat_endpoint_hit",
                 "user_id": request.user_id,
-                "status_code": status.HTTP_429_TOO_MANY_REQUESTS,
-                "detail": e.detail,
+                "prompt_len": len(request.prompt),
             },
+            user_id=request.user_id,
+            prompt_len=len(request.prompt),
         )
-        raise
 
-    async with get_db_context() as db:
+        # Start total processing timer
+        total_start = time.perf_counter()
+
+        # Step 1: Cooldown check (Sliding-window rate limiter)
+        try:
+            limiter.check(request.user_id)
+        except HTTPException as e:
+            logger.warning(
+                "Rate limit cooldown active for user",
+                extra={
+                    "event": "rate_limit_exceeded",
+                    "user_id": request.user_id,
+                    "status_code": status.HTTP_429_TOO_MANY_REQUESTS,
+                    "detail": e.detail,
+                },
+            )
+            raise
+
         # Step 2: Validate participant
-        cursor = await db.execute(
-            "SELECT current_level, completed_at FROM users WHERE id = ?",
-            (request.user_id,),
-        )
-        user_row = await cursor.fetchone()
-        if not user_row:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found",
+        async with get_db_context() as db:
+            cursor = await db.execute(
+                "SELECT current_level, completed_at FROM users WHERE id = ?",
+                (request.user_id,),
             )
-        if user_row["completed_at"]:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Arena already completed!",
-            )
+            user_row = await cursor.fetchone()
+            if not user_row:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found",
+                )
+            if user_row["completed_at"]:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Arena already completed!",
+                )
 
-        level = user_row["current_level"]
+            level = user_row["current_level"]
 
         # Step 3: Record accepted request timestamp for rate limiter
         limiter.update(request.user_id)
@@ -107,17 +124,18 @@ async def chat(
         # Step 4: Level 2 Ingress Defense (Short-circuit without calling Groq)
         if level == 2 and check_level2_ingress(request.prompt):
             total_latency_ms = int((time.perf_counter() - total_start) * 1000)
-            await record_prompt_interaction(
-                db=db,
-                user_id=request.user_id,
-                level=level,
-                prompt_text=request.prompt,
-                response_text=L2_FIREWALL_INTERCEPT_TEXT,
-                char_count=len(request.prompt),
-                latency_ms=0,
-                is_firewall_blocked=True,
-                is_leak_blocked=False,
-            )
+            async with get_db_context() as db:
+                await record_prompt_interaction(
+                    db=db,
+                    user_id=request.user_id,
+                    level=level,
+                    prompt_text=request.prompt,
+                    response_text=L2_FIREWALL_INTERCEPT_TEXT,
+                    char_count=len(request.prompt),
+                    latency_ms=0,
+                    is_firewall_blocked=True,
+                    is_leak_blocked=False,
+                )
             logger.info(
                 "Ingress firewall intercepted prohibited prompt",
                 extra={
@@ -203,17 +221,18 @@ async def chat(
             reply, is_leak = raw_reply, False
 
         # Step 7: Ledger Persistence & Metrics
-        await record_prompt_interaction(
-            db=db,
-            user_id=request.user_id,
-            level=level,
-            prompt_text=request.prompt,
-            response_text=reply,
-            char_count=len(request.prompt),
-            latency_ms=upstream_latency_ms,
-            is_firewall_blocked=False,
-            is_leak_blocked=is_leak,
-        )
+        async with get_db_context() as db:
+            await record_prompt_interaction(
+                db=db,
+                user_id=request.user_id,
+                level=level,
+                prompt_text=request.prompt,
+                response_text=reply,
+                char_count=len(request.prompt),
+                latency_ms=upstream_latency_ms,
+                is_firewall_blocked=False,
+                is_leak_blocked=is_leak,
+            )
 
         total_latency_ms = int((time.perf_counter() - total_start) * 1000)
 
@@ -249,4 +268,14 @@ async def chat(
             reply=reply,
             latency_ms=upstream_latency_ms,
             cooldown_seconds=settings.COOLDOWN_SECONDS,
+        )
+
+    except HTTPException:
+        # Re-raise intended HTTP exceptions (400, 404, 429, 502) without converting to 500
+        raise
+    except Exception as e:
+        logger.exception("FATAL_CHAT_CRASH", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}",
         )
