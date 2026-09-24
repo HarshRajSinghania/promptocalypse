@@ -1,10 +1,14 @@
 """
-Chat execution route with progressive defense security pipeline.
+Chat execution route with progressive defense security pipeline and rate limiting.
 
-Implements Issue #2: [Security] Level 2 Ingress Regex Filter & Level 3 Egress Token Scrubber.
+Implements:
+- Issue #2: [Security] Level 2 Ingress Regex Filter & Level 3 Egress Token Scrubber
+- Issue #3: [Backend] Sliding-Window 3-Second Rate Limiter
 References:
-- docs/FEATURES.md §2.2, §2.3, §2.4
+- docs/PRD.md §4, §6
+- docs/FEATURES.md §2.1, §2.2, §2.3, §2.4
 - docs/TECH-SPEC.md §1.1, §2.2, §4
+- docs/SAD.md §2.2
 """
 
 import time
@@ -16,6 +20,7 @@ import openai
 from app.config import Settings, get_settings
 from app.database import get_db_context
 from app.models import ChatRequest, ChatResponse
+from app.rate_limiter import SlidingWindowRateLimiter, get_rate_limiter
 from app.security import (
     L2_FIREWALL_ALERT_REPLY,
     L2_FIREWALL_INTERCEPT_TEXT,
@@ -43,19 +48,25 @@ async def chat(
     request: ChatRequest,
     settings: Annotated[Settings, Depends(get_settings)],
     client: Annotated[openai.AsyncOpenAI, Depends(get_groq_client)],
+    limiter: Annotated[SlidingWindowRateLimiter, Depends(get_rate_limiter)],
 ) -> ChatResponse:
     """
     Execute a user prompt against the target LLM for their current challenge level.
 
     Processing pipeline:
-    1. Session validation: Ensure participant exists and arena run is active.
-    2. Level 2 Ingress Defense: Block prohibited keywords, short-circuit before Groq.
-    3. LLM Inference: Dispatch context to Groq (llama-3.1-8b-instant).
-    4. Level 3 Egress Defense: Mask secret key token leaks before dispatching reply.
-    5. Persistence: Atomically record prompt interaction and update user metrics.
+    1. Cooldown check: Reject requests arriving within < 3.0s with HTTP 429.
+    2. Session validation: Ensure participant exists and arena run is active.
+    3. Update rate limit window: Mark request timestamp for the validated user.
+    4. Level 2 Ingress Defense: Block prohibited keywords, short-circuit before Groq.
+    5. LLM Inference: Dispatch context to Groq (llama-3.1-8b-instant).
+    6. Level 3 Egress Defense: Mask secret key token leaks before dispatching reply.
+    7. Persistence: Atomically record prompt interaction and update user metrics.
     """
+    # Step 1: Cooldown check (Sliding-window rate limiter)
+    limiter.check(request.user_id)
+
     async with get_db_context() as db:
-        # Step 1: Validate participant
+        # Step 2: Validate participant
         cursor = await db.execute(
             "SELECT current_level, completed_at FROM users WHERE id = ?",
             (request.user_id,),
@@ -74,7 +85,10 @@ async def chat(
 
         level = user_row["current_level"]
 
-        # Step 2: Level 2 Ingress Defense (Short-circuit without calling Groq)
+        # Step 3: Record accepted request timestamp for rate limiter
+        limiter.update(request.user_id)
+
+        # Step 4: Level 2 Ingress Defense (Short-circuit without calling Groq)
         if level == 2 and check_level2_ingress(request.prompt):
             await record_prompt_interaction(
                 db=db,
@@ -93,7 +107,7 @@ async def chat(
                 cooldown_seconds=settings.COOLDOWN_SECONDS,
             )
 
-        # Step 3: Dispatch LLM Inference call to Groq
+        # Step 5: Dispatch LLM Inference call to Groq
         system_prompt = SYSTEM_PROMPTS.get(level, "")
         start_time = time.perf_counter()
         try:
@@ -110,6 +124,7 @@ async def chat(
             raw_reply = response.choices[0].message.content or ""
         except Exception as e:
             # Upstream error/timeout: user prompt count is NOT penalized
+            limiter.reset(request.user_id)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Inference timeout or API error: {str(e)}",
@@ -117,13 +132,13 @@ async def chat(
 
         latency_ms = int((time.perf_counter() - start_time) * 1000)
 
-        # Step 4: Level 3 Egress Defense (Sanitize output tokens)
+        # Step 6: Level 3 Egress Defense (Sanitize output tokens)
         if level == 3:
             reply, is_leak = scrub_level3_egress(raw_reply)
         else:
             reply, is_leak = raw_reply, False
 
-        # Step 5: Ledger Persistence & Metrics
+        # Step 7: Ledger Persistence & Metrics
         await record_prompt_interaction(
             db=db,
             user_id=request.user_id,
