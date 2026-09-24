@@ -1,16 +1,20 @@
 """
-Game progression routes: flag submission verification.
+Game progression routes: flag submission verification, leaderboard, and user state.
 
-Implements Issue #4: Scoring Engine.
+Implements:
+- Issue #4: Scoring Engine
+- Issue #5: Multi-Tier Leaderboard Endpoint
 References:
-- docs/TECH-SPEC.md §2.3 (Challenge Progression), §5 (Scoring & State Machine)
-- docs/FEATURES.md Phase 3 (Vault Validation, Scoring & Progression)
+- docs/TECH-SPEC.md §2.3, §2.4, §5
+- docs/FEATURES.md Phase 3 & Phase 4
 """
+
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.database import get_db_context
-from app.models import SubmitKeyRequest, SubmitKeyResponse
+from app.models import LeaderboardEntry, SubmitKeyRequest, SubmitKeyResponse
 from app.scoring import (
     STATUS_ALREADY_COMPLETED,
     STATUS_COMPLETED,
@@ -21,6 +25,27 @@ from app.scoring import (
 )
 
 router = APIRouter(prefix="/api", tags=["game"])
+
+
+def _compute_duration_seconds(start_iso: str, end_iso: str) -> int:
+    """
+    Compute elapsed seconds between two ISO 8601 timestamp strings.
+
+    Handles both timezone-aware and naive (assumed UTC) timestamps.
+    Returns 0 if parsing fails or result is negative.
+    """
+    try:
+        start = datetime.fromisoformat(start_iso)
+        end = datetime.fromisoformat(end_iso)
+        # Ensure both are tz-aware for comparison
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+        delta = int((end - start).total_seconds())
+        return max(0, delta)
+    except (ValueError, TypeError):
+        return 0
 
 
 @router.post("/submit-key", response_model=SubmitKeyResponse)
@@ -80,19 +105,68 @@ async def submit_key(request: SubmitKeyRequest) -> SubmitKeyResponse:
     )
 
 
-@router.get("/leaderboard")
-async def get_leaderboard() -> dict[str, str]:
+@router.get("/leaderboard", response_model=list[LeaderboardEntry])
+async def get_leaderboard() -> list[LeaderboardEntry]:
     """
     Retrieve ranked leaderboard of participants.
 
-    Expected processing:
-    Query users table ordered by final_score (DESC), current_level (DESC),
-    total_prompts (ASC), total_chars (ASC), and completion time.
+    Implements Issue #5: Multi-Tier Leaderboard Endpoint.
+    Reference: docs/TECH-SPEC.md §2.4
+
+    Query uses the idx_leaderboard_rank composite index for efficient sorting:
+    final_score DESC, current_level DESC, total_prompts ASC, total_chars ASC,
+    completed_at ASC.
+
+    Calculates duration_seconds as elapsed time from start_time to either
+    completed_at (for finished participants) or the current UTC time.
     """
-    return {
-        "status": "not_implemented",
-        "message": "TODO: Implement leaderboard ranking retrieval",
-    }
+    async with get_db_context() as db:
+        cursor = await db.execute(
+            """
+            SELECT
+                username,
+                current_level,
+                completed_at,
+                start_time,
+                total_prompts,
+                total_chars,
+                final_score
+            FROM users
+            WHERE is_disqualified = 0
+            ORDER BY
+                final_score DESC,
+                current_level DESC,
+                total_prompts ASC,
+                total_chars ASC,
+                completed_at ASC
+            LIMIT 50
+            """,
+        )
+        rows = await cursor.fetchall()
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    entries: list[LeaderboardEntry] = []
+    for rank, row in enumerate(rows, start=1):
+        # Calculate duration from start_time to completed_at (or now)
+        end_time_str = row["completed_at"] if row["completed_at"] else now_iso
+        duration_seconds = _compute_duration_seconds(
+            row["start_time"], end_time_str
+        )
+
+        entries.append(
+            LeaderboardEntry(
+                rank=rank,
+                username=row["username"],
+                current_level=row["current_level"],
+                completed=row["completed_at"] is not None,
+                final_score=row["final_score"],
+                total_prompts=row["total_prompts"],
+                total_chars=row["total_chars"],
+                duration_seconds=duration_seconds,
+            )
+        )
+
+    return entries
 
 
 @router.get("/user/state")
