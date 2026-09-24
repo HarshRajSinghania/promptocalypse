@@ -84,3 +84,28 @@ class UserStateResponse(BaseModel):
     final_score: float = 0.0
     is_disqualified: bool = False
     completed: bool = False
+
+
+# Health & Readiness Diagnostic Response Models (Issue #26)
+class HealthDatabaseStatus(BaseModel):
+    status: str
+    latency_ms: Optional[int] = None
+    journal_mode: Optional[str] = None
+    error: Optional[str] = None
+
+
+class HealthProviderStatus(BaseModel):
+    status: str
+    name: str = "groq"
+    model: str = ""
+    latency_ms: Optional[int] = None
+    cached: bool = False
+    checked_at: str
+    error: Optional[str] = None
+
+
+class HealthResponse(BaseModel):
+    status: str
+    database: HealthDatabaseStatus
+    provider: HealthProviderStatus
+    timestamp: str
