@@ -1,6 +1,7 @@
 import type { SubmitKeyResponse } from '../types'
 
-export const API_BASE = '/api';
+export const API_BASE =
+  (import.meta.env?.VITE_API_BASE as string | undefined) || '/api';
 
 export async function registerUser(username: string) {
   // TODO: POST /api/auth/register

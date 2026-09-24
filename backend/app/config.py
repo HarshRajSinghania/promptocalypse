@@ -11,6 +11,13 @@ class Settings(BaseSettings):
     COOLDOWN_SECONDS: float = 3.0
     MAX_PROMPT_LENGTH: int = 1000
     MAX_TOKENS: int = 150
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+    ]
+    CORS_ALLOW_ORIGIN_REGEX: str = r"^https?://.*$"
 
     model_config = SettingsConfigDict(
         env_file=".env",
