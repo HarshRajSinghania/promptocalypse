@@ -232,3 +232,69 @@
     width: 100%;
   }
 }
+
+/* ==========================================================================
+   Toast Banner — Issue #27: Rate Limit & Gateway Failure Notices
+   ========================================================================== */
+.chat-terminal__toast {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
+  border-top: 1px solid var(--border);
+  border-left: 3px solid var(--warning);
+  background-color: rgba(255, 176, 32, 0.08);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+
+.chat-terminal__toast--gateway {
+  border-left-color: var(--error);
+  background-color: rgba(255, 59, 92, 0.08);
+}
+
+.chat-terminal__toast-text {
+  flex: 1;
+}
+
+.chat-terminal__toast-dismiss {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1;
+  padding: 0.15rem 0.45rem;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.chat-terminal__toast-dismiss:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+/* ==========================================================================
+   Terminal Footer — Issue #27: Request Latency (X-Process-Time)
+   ========================================================================== */
+.chat-terminal__footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.35rem 1rem;
+  border-top: 1px solid var(--border);
+  background-color: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.chat-terminal__rtt {
+  color: var(--accent);
+  letter-spacing: 0.05em;
+}

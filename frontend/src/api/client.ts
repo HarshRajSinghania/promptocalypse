@@ -1,4 +1,5 @@
 import type { SubmitKeyResponse, User } from '../types'
+import type { ChatFailureKind } from '../utils/chatFeedback'
 
 export const API_BASE =
   (import.meta.env?.VITE_API_BASE as string | undefined) || '/api';
@@ -21,11 +22,100 @@ export async function registerUser(
   return (await res.json()) as User
 }
 
-export async function sendPrompt(userId: string, prompt: string) {
-  // TODO: POST /api/chat
-  void userId;
-  void prompt;
-  throw new Error('Not implemented');
+export interface ChatPromptResponse {
+  reply: string
+  status?: string
+  /**
+   * Round-trip latency in ms parsed from the X-Process-Time response header.
+   * null when the header is absent — the value is never fabricated.
+   */
+  latencyMs: number | null
+}
+
+/**
+ * Typed failure for POST /api/chat:
+ * - HTTP 429 → kind 'rate_limit' (submission stays disabled for the cooldown),
+ * - HTTP 502 / network transport failure → kind 'gateway' (user may retry).
+ */
+export class ChatPromptError extends Error {
+  readonly kind: ChatFailureKind
+  readonly status?: number
+  readonly latencyMs?: number | null
+
+  constructor(
+    message: string,
+    kind: ChatFailureKind,
+    options: { status?: number; latencyMs?: number | null } = {}
+  ) {
+    super(message)
+    this.name = 'ChatPromptError'
+    this.kind = kind
+    this.status = options.status
+    this.latencyMs = options.latencyMs
+  }
+}
+
+// Backend middleware sends X-Process-Time as "<value>ms" (e.g. "420.31ms").
+const PROCESS_TIME_PATTERN = /^(\d+(?:\.\d+)?)\s*ms$/i
+
+/**
+ * Parses the X-Process-Time response header into milliseconds.
+ * Returns null when the header is missing or unparseable (no fabrication).
+ */
+export function parseProcessTime(headerValue: string | null): number | null {
+  if (!headerValue) {
+    return null
+  }
+  const match = PROCESS_TIME_PATTERN.exec(headerValue.trim())
+  if (!match) {
+    return null
+  }
+  const ms = Number(match[1])
+  return Number.isFinite(ms) ? ms : null
+}
+
+export async function sendPrompt(
+  userId: string,
+  prompt: string
+): Promise<ChatPromptResponse> {
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId, prompt }),
+    })
+  } catch {
+    // Transport-level network failure: no HTTP response was received.
+    throw new ChatPromptError(
+      'Network failure while contacting the inference gateway',
+      'gateway'
+    )
+  }
+
+  const latencyMs = parseProcessTime(res.headers.get('X-Process-Time'))
+
+  if (res.status === 429) {
+    throw new ChatPromptError('Rate limit active', 'rate_limit', {
+      status: 429,
+      latencyMs,
+    })
+  }
+  if (res.status === 502) {
+    throw new ChatPromptError('Inference gateway timeout', 'gateway', {
+      status: 502,
+      latencyMs,
+    })
+  }
+  if (!res.ok) {
+    const errorData = (await res.json().catch(() => ({}))) as {
+      detail?: string
+    }
+    throw new Error(errorData.detail || 'Prompt failed')
+  }
+
+  const data = (await res.json()) as { reply: string; status?: string }
+  return { reply: data.reply, status: data.status, latencyMs }
 }
 
 export async function submitKey(
