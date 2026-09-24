@@ -2,7 +2,7 @@ import time
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import get_settings
+from app.config import get_llm_config, get_settings
 from app.database import init_db
 from app.logger import logger, setup_logging
 from app.routes.admin import router as admin_router
@@ -80,8 +80,31 @@ async def telemetry_middleware(request: Request, call_next):
 
 @app.on_event("startup")
 async def startup_event() -> None:
-    """Startup event that initializes logging and database."""
+    """Startup event that initializes logging, validates LLM credentials, and initializes database."""
     setup_logging(log_file_path=settings.LOG_FILE_PATH)
+
+    # Verify environment variable loading at process boot
+    llm_cfg = get_llm_config(settings)
+    if not llm_cfg["api_key"] or llm_cfg["api_key"] in {"gsk_your_api_key_here", "your_groq_api_key_here", "your_openrouter_api_key_here"}:
+        logger.warning(
+            "LLM credential warning: neither GROQ_API_KEY nor OPENROUTER_API_KEY is populated with a valid key",
+            extra={
+                "event": "llm_credentials_unconfigured",
+                "provider": llm_cfg["provider"],
+                "base_url": llm_cfg["base_url"],
+            },
+        )
+    else:
+        logger.info(
+            "LLM provider verified at startup",
+            extra={
+                "event": "llm_provider_configured",
+                "provider": llm_cfg["provider"],
+                "base_url": llm_cfg["base_url"],
+                "model": llm_cfg["model"],
+            },
+        )
+
     await init_db()
 
 

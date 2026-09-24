@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 import httpx
 import openai
 
-from app.config import Settings, get_settings
+from app.config import Settings, get_llm_config, get_settings
 from app.database import get_db_context
 from app.logger import logger
 from app.models import ChatRequest, ChatResponse
@@ -38,11 +38,12 @@ router = APIRouter(prefix="/api", tags=["chat"])
 def get_groq_client(
     settings: Annotated[Settings, Depends(get_settings)]
 ) -> openai.AsyncOpenAI:
-    """Dependency provider for Groq AsyncOpenAI client with explicit timeout."""
+    """Dependency provider for AsyncOpenAI client with explicit timeout and provider base_url."""
+    config = get_llm_config(settings)
     http_client = httpx.AsyncClient(timeout=8.0)
     return openai.AsyncOpenAI(
-        base_url=settings.GROQ_BASE_URL,
-        api_key=settings.GROQ_API_KEY,
+        base_url=config["base_url"],
+        api_key=config["api_key"],
         http_client=http_client,
     )
 
@@ -160,8 +161,10 @@ async def chat(
                 cooldown_seconds=settings.COOLDOWN_SECONDS,
             )
 
-        # Step 5: Dispatch LLM Inference call to Groq
+        # Step 5: Dispatch LLM Inference call
         system_prompt = SYSTEM_PROMPTS.get(level, "")
+        llm_cfg = get_llm_config(settings)
+        active_model = llm_cfg["model"]
         logger.info(
             "Dispatching prompt to LLM provider",
             extra={
@@ -169,14 +172,15 @@ async def chat(
                 "user_id": request.user_id,
                 "challenge_level": level,
                 "input_chars": len(request.prompt),
-                "provider": settings.GROQ_MODEL,
+                "provider": llm_cfg["provider"],
+                "model": active_model,
                 "prompt": request.prompt,
             },
         )
         upstream_start = time.perf_counter()
         try:
             response = await client.chat.completions.create(
-                model=settings.GROQ_MODEL,
+                model=active_model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": request.prompt},
@@ -200,7 +204,8 @@ async def chat(
                     "input_chars": len(request.prompt),
                     "upstream_latency_ms": upstream_latency_ms,
                     "total_latency_ms": total_latency_ms,
-                    "provider": settings.GROQ_MODEL,
+                    "provider": llm_cfg["provider"],
+                    "model": active_model,
                     "status_code": status.HTTP_502_BAD_GATEWAY,
                     "error": str(e),
                     "prompt": request.prompt,
@@ -257,7 +262,8 @@ async def chat(
                 "is_leak_blocked": is_leak,
                 "upstream_latency_ms": upstream_latency_ms,
                 "total_latency_ms": total_latency_ms,
-                "provider": settings.GROQ_MODEL,
+                "provider": llm_cfg["provider"],
+                "model": active_model,
                 "status_code": status.HTTP_200_OK,
                 "prompt": request.prompt,
                 "token_usage": token_usage,
