@@ -9,6 +9,7 @@ from app.routes.admin import router as admin_router
 from app.routes.auth import router as auth_router
 from app.routes.chat import router as chat_router
 from app.routes.game import router as game_router
+from app.routes.health import router as health_router
 
 settings = get_settings()
 
@@ -113,6 +114,7 @@ app.include_router(admin_router)
 app.include_router(auth_router)
 app.include_router(chat_router)
 app.include_router(game_router)
+app.include_router(health_router)
 
 
 @app.get("/health", tags=["health"])

@@ -89,6 +89,7 @@ Three levels of progressively defended LLM chatbots:
 | POST   | `/api/submit-key`    | Submit a flag for verification |
 | GET    | `/api/leaderboard`   | Fetch top 50 rankings          |
 | GET    | `/api/user/state`    | Get current user state         |
+| GET    | `/api/health`        | Health & readiness diagnostic probe (DB + LLM provider) |
 | GET    | `/health`            | Health check                   |
 
 ## Contributing

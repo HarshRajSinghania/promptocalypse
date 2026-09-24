@@ -22,9 +22,15 @@ export async function registerUser(
   return (await res.json()) as User
 }
 
-export interface ChatPromptResponse {
-  reply: string
-  status?: string
+/** Chat API response body (upstream/main). */
+export interface ChatApiResponse {
+  reply: string;
+  status?: 'success' | 'blocked' | string;
+  latency_ms?: number;
+  cooldown_seconds?: number;
+}
+
+export interface ChatPromptResponse extends ChatApiResponse {
   /**
    * Round-trip latency in ms parsed from the X-Process-Time response header.
    * null when the header is absent — the value is never fabricated.
@@ -111,11 +117,18 @@ export async function sendPrompt(
     const errorData = (await res.json().catch(() => ({}))) as {
       detail?: string
     }
-    throw new Error(errorData.detail || 'Prompt failed')
+    // Preserve upstream's status/detail attachment so formatErrorAlert can
+    // still classify non-429/502 HTTP failures (404, 400, ...).
+    const err = new Error(
+      errorData.detail || `Chat request failed with status ${res.status}`
+    ) as Error & { status?: number; detail?: string }
+    err.status = res.status
+    err.detail = errorData.detail
+    throw err
   }
 
-  const data = (await res.json()) as { reply: string; status?: string }
-  return { reply: data.reply, status: data.status, latencyMs }
+  const data = (await res.json()) as ChatApiResponse
+  return { ...data, latencyMs }
 }
 
 export async function submitKey(

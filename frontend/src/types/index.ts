@@ -10,10 +10,15 @@ export interface User {
 }
 
 export interface ChatMessage {
-  sender: 'user' | 'bot' | 'system';
-  text: string;
-  timestamp: number;
+  id: string;
+  sender: 'user' | 'assistant' | 'system_alert' | 'bot' | 'system';
+  content: string;
+  text?: string;
+  timestamp: string | number;
+  latency_ms?: number;
+  status?: 'success' | 'blocked' | 'error';
   isBlocked?: boolean;
+  level?: number;
 }
 
 export interface LeaderboardEntry {

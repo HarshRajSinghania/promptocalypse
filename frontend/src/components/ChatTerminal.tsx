@@ -7,20 +7,36 @@ import {
   formatRttLabel,
   type ChatFailureKind,
 } from '../utils/chatFeedback'
+import { sendPrompt } from '../api/client'
+import { loadSession, saveSession } from '../utils/session'
+import {
+  createChatMessage,
+  detectFirewallIntercept,
+  formatErrorAlert,
+  getPersonaLabel,
+  getStoredChatHistory,
+  saveChatHistory,
+} from '../utils/chat'
 import './ChatTerminal.css'
 
 const MAX_CHARS = 1000
 const WARN_CHARS = 900
 
-interface ChatTerminalProps {
+export interface ChatTerminalProps {
+  userId?: string
+  currentLevel?: number
   /**
    * Callback to send a prompt to the backend.
    * Returns the bot reply text, optional status ('blocked' for firewall
-   * intercepts) and the measured round-trip time from X-Process-Time.
+   * intercepts), the backend latency_ms / cooldown_seconds reported by the
+   * API and the measured round-trip time from X-Process-Time (Issue #27).
    */
   onSendPrompt?: (prompt: string) => Promise<{
     reply: string
     status?: string
+    latency_ms?: number
+    cooldown_seconds?: number
+    /** Measured X-Process-Time round trip; null when the header is absent. */
     latencyMs?: number | null
   }>
 }
@@ -30,9 +46,16 @@ interface ChatNotice {
   text: string
 }
 
-export default function ChatTerminal({ onSendPrompt }: ChatTerminalProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+export default function ChatTerminal({
+  userId = '',
+  currentLevel = 1,
+  onSendPrompt,
+}: ChatTerminalProps) {
+  const [messagesByLevel, setMessagesByLevel] = useState<
+    Record<number, ChatMessage[]>
+  >(() => getStoredChatHistory())
   const [input, setInput] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
   const [isCoolingDown, setIsCoolingDown] = useState(false)
   const [notice, setNotice] = useState<ChatNotice | null>(null)
   const [rttMs, setRttMs] = useState<number | null>(null)
@@ -40,10 +63,12 @@ export default function ChatTerminal({ onSendPrompt }: ChatTerminalProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Auto-scroll to bottom when messages change
+  const currentMessages = messagesByLevel[currentLevel] || []
+
+  // Auto-scroll to bottom when messages, loading state, or current level changes
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' })
+  }, [currentMessages, isLoading, currentLevel])
 
   // Auto-dismiss the toast banner after it has been visible for a while
   useEffect(() => {
@@ -74,62 +99,130 @@ export default function ChatTerminal({ onSendPrompt }: ChatTerminalProps) {
 
   const handleSubmit = useCallback(async () => {
     const trimmed = input.trim()
-    if (!trimmed || isCoolingDown) return
+    if (!trimmed || isCoolingDown || isLoading) return
 
-    // Add user message
-    const userMsg: ChatMessage = {
+    // 1. Optimistically append user message
+    const userMsg = createChatMessage({
       sender: 'user',
-      text: trimmed,
-      timestamp: Date.now(),
-    }
-    setMessages((prev) => [...prev, userMsg])
+      content: trimmed,
+      level: currentLevel,
+    })
+
+    setMessagesByLevel((prev) => {
+      const prevList = prev[currentLevel] || []
+      const nextList = [...prevList, userMsg]
+      const nextMap = { ...prev, [currentLevel]: nextList }
+      saveChatHistory(nextMap)
+      return nextMap
+    })
     setInput('')
 
-    // Start cooldown
+    // 2. Start the 3-second submission cooldown (Issue #27 tracks the timer so
+    //    a gateway failure can re-enable submission before it expires).
     startCooldown()
 
-    // Send to backend if callback provided
-    if (onSendPrompt) {
-      try {
-        const response = await onSendPrompt(trimmed)
-        const botMsg: ChatMessage = {
-          sender: response.status === 'blocked' ? 'system' : 'bot',
-          text: response.reply,
-          timestamp: Date.now(),
-          isBlocked: response.status === 'blocked',
-        }
-        setMessages((prev) => [...prev, botMsg])
-        setRttMs(response.latencyMs ?? null)
-        setNotice(null)
-      } catch (error) {
-        const feedback = feedbackForFailure(error)
+    // 3. Set typing / loading indicator
+    setIsLoading(true)
 
-        // Keep the footer RTT in sync when the failure carried a measured latency.
-        const measured = (error as { latencyMs?: number | null } | null)
-          ?.latencyMs
-        if (typeof measured === 'number' && Number.isFinite(measured)) {
-          setRttMs(measured)
-        }
-
-        const errorMsg: ChatMessage = {
-          sender: 'system',
-          text: feedback.notice,
-          timestamp: Date.now(),
-        }
-        setMessages((prev) => [...prev, errorMsg])
-        setNotice({ kind: feedback.kind, text: feedback.notice })
-
-        if (feedback.reenableSubmission) {
-          // 502 / network failure: re-enable submission so the user can retry.
-          clearCooldown()
-          setIsCoolingDown(false)
-        } else {
-          // 429: keep submission disabled for the full 3-second rate limit window.
-          startCooldown()
-        }
-      }
+    // Update prompt counter in session if session exists
+    const session = loadSession()
+    if (session) {
+      session.total_prompts = (session.total_prompts || 0) + 1
+      session.total_chars = (session.total_chars || 0) + trimmed.length
+      saveSession(session)
     }
-  }, [input, isCoolingDown, onSendPrompt, startCooldown, clearCooldown])
+
+    try {
+      let response: {
+        reply: string
+        status?: string
+        latency_ms?: number
+        cooldown_seconds?: number
+        latencyMs?: number | null
+      }
+
+      if (onSendPrompt) {
+        response = await onSendPrompt(trimmed)
+      } else if (userId) {
+        response = await sendPrompt(userId, trimmed)
+      } else {
+        throw new Error('Authentication required: please register or sign in.')
+      }
+
+      const reply = response.reply || ''
+      const { isBlocked } = detectFirewallIntercept(reply, response.status)
+
+      const assistantMsg = createChatMessage({
+        sender: 'assistant',
+        content: reply,
+        latency_ms: response.latency_ms,
+        status: isBlocked ? 'blocked' : 'success',
+        isBlocked: isBlocked,
+        level: currentLevel,
+      })
+
+      setMessagesByLevel((prev) => {
+        const prevList = prev[currentLevel] || []
+        const nextList = [...prevList, assistantMsg]
+        const nextMap = { ...prev, [currentLevel]: nextList }
+        saveChatHistory(nextMap)
+        return nextMap
+      })
+
+      // Issue #27: footer shows the measured round-trip (null → hidden, the
+      // value is never fabricated) and a success clears any error toast.
+      setRttMs(response.latencyMs ?? null)
+      setNotice(null)
+    } catch (err: unknown) {
+      // Issue #27: classify the failure for the toast banner & retry policy.
+      const feedback = feedbackForFailure(err)
+
+      // Keep the footer RTT in sync when the failure carried a measured latency.
+      const measured = (err as { latencyMs?: number | null } | null)?.latencyMs
+      if (typeof measured === 'number' && Number.isFinite(measured)) {
+        setRttMs(measured)
+      }
+
+      const alertText = formatErrorAlert(err)
+      const alertMsg = createChatMessage({
+        sender: 'system_alert',
+        content: alertText,
+        status: 'error',
+        level: currentLevel,
+      })
+
+      setMessagesByLevel((prev) => {
+        const prevList = prev[currentLevel] || []
+        const nextList = [...prevList, alertMsg]
+        const nextMap = { ...prev, [currentLevel]: nextList }
+        saveChatHistory(nextMap)
+        return nextMap
+      })
+
+      // Issue #27: toast banner with the exact copy for this failure kind.
+      setNotice({ kind: feedback.kind, text: feedback.notice })
+
+      if (feedback.reenableSubmission) {
+        // 502 / network failure: re-enable submission so the user can retry.
+        clearCooldown()
+        setIsCoolingDown(false)
+      } else {
+        // 429: keep submission disabled for the full 3-second rate limit window.
+        startCooldown()
+      }
+    } finally {
+      setIsLoading(false)
+    }
+  }, [
+    input,
+    isCoolingDown,
+    isLoading,
+    currentLevel,
+    onSendPrompt,
+    userId,
+    startCooldown,
+    clearCooldown,
+  ])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Enter without Shift submits
@@ -162,26 +255,87 @@ export default function ChatTerminal({ onSendPrompt }: ChatTerminalProps) {
     <section className="chat-terminal">
       {/* Message list */}
       <div className="chat-terminal__messages">
-        {messages.length === 0 ? (
+        {currentMessages.length === 0 && !isLoading ? (
           <p className="chat-terminal__empty">
             [ Arena Terminal Ready — Awaiting prompt injection ]
           </p>
         ) : (
-          messages.map((msg, i) => (
-            <div
-              key={`${msg.timestamp}-${i}`}
-              className={`chat-message chat-message--${msg.sender}${msg.isBlocked ? ' chat-message--blocked' : ''}`}
-            >
-              <span className="chat-message__label">
-                {msg.sender === 'user'
-                  ? '> YOU'
-                  : msg.sender === 'bot'
-                    ? '< BOT'
-                    : '⚠ FIREWALL'}
-              </span>
-              <span className="chat-message__text">{msg.text}</span>
-            </div>
-          ))
+          <>
+            {currentMessages.map((msg, i) => {
+              const content = msg.content || msg.text || ''
+              const { isBlocked, isLeak } = detectFirewallIntercept(
+                content,
+                msg.status
+              )
+              const blockedActive = isBlocked || Boolean(msg.isBlocked)
+              const levelTag = msg.level ?? currentLevel
+              const label = getPersonaLabel(
+                msg.sender,
+                levelTag,
+                blockedActive,
+                isLeak
+              )
+
+              const messageClasses = [
+                'chat-message',
+                `chat-message--${msg.sender}`,
+                blockedActive ? 'chat-message--blocked' : '',
+                isLeak ? 'chat-message--leak' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')
+
+              return (
+                <div
+                  key={msg.id || `${msg.timestamp}-${i}`}
+                  className={messageClasses}
+                >
+                  <div className="chat-message__header">
+                    <span className="chat-message__label">{label}</span>
+                    <div className="chat-message__badges">
+                      {blockedActive && (
+                        <span className="chat-message__badge--intercept">
+                          ⚠ FIREWALL INTERCEPT
+                        </span>
+                      )}
+                      {isLeak && (
+                        <span className="chat-message__badge--leak">
+                          ⚠ LEAK MASKED
+                        </span>
+                      )}
+                      {typeof msg.latency_ms === 'number' && msg.latency_ms >= 0 && (
+                        <span
+                          className="chat-message__latency"
+                          title="Inference Latency"
+                        >
+                          {msg.latency_ms}ms
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="chat-message__text">{content}</div>
+                </div>
+              )
+            })}
+
+            {isLoading && (
+              <div className="chat-message chat-message--assistant chat-message--loading">
+                <div className="chat-message__header">
+                  <span className="chat-message__label">
+                    TARGET_BOT [L{currentLevel}]
+                  </span>
+                </div>
+                <div className="chat-message__text chat-typing-indicator">
+                  <span className="chat-typing-dots">
+                    <span className="chat-typing-dot" />
+                    <span className="chat-typing-dot" />
+                    <span className="chat-typing-dot" />
+                  </span>
+                  <span className="chat-typing-cursor">▋</span>
+                </div>
+              </div>
+            )}
+          </>
         )}
         <div ref={messagesEndRef} />
       </div>
@@ -216,7 +370,7 @@ export default function ChatTerminal({ onSendPrompt }: ChatTerminalProps) {
             value={input}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
-            readOnly={isCoolingDown}
+            readOnly={isCoolingDown || isLoading}
             maxLength={MAX_CHARS}
           />
           <span className={charCounterClass}>
@@ -225,7 +379,7 @@ export default function ChatTerminal({ onSendPrompt }: ChatTerminalProps) {
         </div>
         <button
           className={`chat-terminal__submit${isCoolingDown ? ' chat-terminal__submit--cooldown' : ''}`}
-          disabled={isCoolingDown || charCount === 0}
+          disabled={isCoolingDown || isLoading || charCount === 0}
           onClick={handleSubmit}
         >
           {isCoolingDown ? 'WAIT' : 'SEND'}

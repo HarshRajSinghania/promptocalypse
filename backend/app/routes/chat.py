@@ -11,6 +11,7 @@ References:
 - docs/SAD.md §2.2
 """
 
+import asyncio
 import time
 from typing import Annotated
 
@@ -33,6 +34,34 @@ from app.security import (
 )
 
 router = APIRouter(prefix="/api", tags=["chat"])
+
+# ---------------------------------------------------------------------------
+# Deterministic Mock LLM Provider (Issue #28: MOCK_LLM_MODE)
+# ---------------------------------------------------------------------------
+
+# Emulated upstream latency for the mock provider (300ms).
+MOCK_LLM_SLEEP_SECONDS = 0.3
+
+# Fixed, deterministic per-level replies served when MOCK_LLM_MODE=true.
+MOCK_LLM_RESPONSES: dict[int, str] = {
+    1: "Mock response: I cannot share the secret.",
+    2: "Mock response: Guard mode active.",
+    3: "Mock response: Here is your key: FLAG{cipher_master_2026}",
+}
+
+MOCK_LLM_DEFAULT_RESPONSE = "Mock response: no mock configured for this level."
+
+
+async def mock_llm_completion(level: int) -> str:
+    """
+    Asynchronous deterministic mock completion used when MOCK_LLM_MODE=true.
+
+    Sleeps 300ms to emulate upstream latency, then returns the fixed reply for
+    the given challenge level. The Level 3 reply intentionally contains the raw
+    FLAG so the existing Level 3 egress scrubber is exercised downstream.
+    """
+    await asyncio.sleep(MOCK_LLM_SLEEP_SECONDS)
+    return MOCK_LLM_RESPONSES.get(level, MOCK_LLM_DEFAULT_RESPONSE)
 
 
 def get_groq_client(
@@ -64,7 +93,8 @@ async def chat(
     3. Session validation: Ensure participant exists and arena run is active.
     4. Update rate limit window: Mark request timestamp for the validated user.
     5. Level 2 Ingress Defense: Block prohibited keywords, short-circuit before Groq.
-    6. LLM Inference: Dispatch context to Groq (llama-3.1-8b-instant).
+    6. LLM Inference: Dispatch context to Groq (llama-3.1-8b-instant), or serve
+       the deterministic 300ms async mock reply when MOCK_LLM_MODE=true.
     7. Level 3 Egress Defense: Mask secret key token leaks before dispatching reply.
     8. Persistence: Atomically record prompt interaction and update user metrics.
     """
@@ -165,6 +195,7 @@ async def chat(
         system_prompt = SYSTEM_PROMPTS.get(level, "")
         llm_cfg = get_llm_config(settings)
         active_model = llm_cfg["model"]
+        mock_mode = settings.MOCK_LLM_MODE
         logger.info(
             "Dispatching prompt to LLM provider",
             extra={
@@ -174,22 +205,30 @@ async def chat(
                 "input_chars": len(request.prompt),
                 "provider": llm_cfg["provider"],
                 "model": active_model,
+                "mock_provider": mock_mode,
                 "prompt": request.prompt,
             },
         )
         upstream_start = time.perf_counter()
+        # Stays None when the mock provider is used, so the token usage read below is safe.
+        response = None
         try:
-            response = await client.chat.completions.create(
-                model=active_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": request.prompt},
-                ],
-                temperature=0.2,
-                max_tokens=settings.MAX_TOKENS,
-                timeout=8.0,
-            )
-            raw_reply = response.choices[0].message.content or ""
+            if mock_mode:
+                # Issue #28: MOCK_LLM_MODE=true serves a deterministic async
+                # mock reply without touching the upstream provider client.
+                raw_reply = await mock_llm_completion(level)
+            else:
+                response = await client.chat.completions.create(
+                    model=active_model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": request.prompt},
+                    ],
+                    temperature=0.2,
+                    max_tokens=settings.MAX_TOKENS,
+                    timeout=8.0,
+                )
+                raw_reply = response.choices[0].message.content or ""
         except Exception as e:
             # Upstream error/timeout: user prompt count is NOT penalized
             limiter.reset(request.user_id)
@@ -264,6 +303,7 @@ async def chat(
                 "total_latency_ms": total_latency_ms,
                 "provider": llm_cfg["provider"],
                 "model": active_model,
+                "mock_provider": mock_mode,
                 "status_code": status.HTTP_200_OK,
                 "prompt": request.prompt,
                 "token_usage": token_usage,
