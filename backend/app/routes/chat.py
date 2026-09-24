@@ -19,6 +19,7 @@ import openai
 
 from app.config import Settings, get_settings
 from app.database import get_db_context
+from app.logger import logger
 from app.models import ChatRequest, ChatResponse
 from app.rate_limiter import SlidingWindowRateLimiter, get_rate_limiter
 from app.security import (
@@ -62,8 +63,23 @@ async def chat(
     6. Level 3 Egress Defense: Mask secret key token leaks before dispatching reply.
     7. Persistence: Atomically record prompt interaction and update user metrics.
     """
+    # Start total processing timer
+    total_start = time.perf_counter()
+
     # Step 1: Cooldown check (Sliding-window rate limiter)
-    limiter.check(request.user_id)
+    try:
+        limiter.check(request.user_id)
+    except HTTPException as e:
+        logger.warning(
+            "Rate limit cooldown active for user",
+            extra={
+                "event": "rate_limit_exceeded",
+                "user_id": request.user_id,
+                "status_code": status.HTTP_429_TOO_MANY_REQUESTS,
+                "detail": e.detail,
+            },
+        )
+        raise
 
     async with get_db_context() as db:
         # Step 2: Validate participant
@@ -90,6 +106,7 @@ async def chat(
 
         # Step 4: Level 2 Ingress Defense (Short-circuit without calling Groq)
         if level == 2 and check_level2_ingress(request.prompt):
+            total_latency_ms = int((time.perf_counter() - total_start) * 1000)
             await record_prompt_interaction(
                 db=db,
                 user_id=request.user_id,
@@ -101,6 +118,24 @@ async def chat(
                 is_firewall_blocked=True,
                 is_leak_blocked=False,
             )
+            logger.info(
+                "Ingress firewall intercepted prohibited prompt",
+                extra={
+                    "event": "ingress_firewall_blocked",
+                    "user_id": request.user_id,
+                    "challenge_level": level,
+                    "input_chars": len(request.prompt),
+                    "output_chars": len(L2_FIREWALL_ALERT_REPLY),
+                    "guardrail_status": "firewall_blocked",
+                    "is_firewall_blocked": True,
+                    "is_leak_blocked": False,
+                    "upstream_latency_ms": 0,
+                    "total_latency_ms": total_latency_ms,
+                    "provider": settings.GROQ_MODEL,
+                    "status_code": status.HTTP_200_OK,
+                    "prompt": request.prompt,
+                },
+            )
             return ChatResponse(
                 reply=L2_FIREWALL_ALERT_REPLY,
                 status="blocked",
@@ -109,7 +144,18 @@ async def chat(
 
         # Step 5: Dispatch LLM Inference call to Groq
         system_prompt = SYSTEM_PROMPTS.get(level, "")
-        start_time = time.perf_counter()
+        logger.info(
+            "Dispatching prompt to LLM provider",
+            extra={
+                "event": "llm_prompt_dispatched",
+                "user_id": request.user_id,
+                "challenge_level": level,
+                "input_chars": len(request.prompt),
+                "provider": settings.GROQ_MODEL,
+                "prompt": request.prompt,
+            },
+        )
+        upstream_start = time.perf_counter()
         try:
             response = await client.chat.completions.create(
                 model=settings.GROQ_MODEL,
@@ -125,12 +171,30 @@ async def chat(
         except Exception as e:
             # Upstream error/timeout: user prompt count is NOT penalized
             limiter.reset(request.user_id)
+            upstream_latency_ms = int((time.perf_counter() - upstream_start) * 1000)
+            total_latency_ms = int((time.perf_counter() - total_start) * 1000)
+            logger.error(
+                "Upstream LLM inference failure or timeout",
+                extra={
+                    "event": "llm_completion_failed",
+                    "user_id": request.user_id,
+                    "challenge_level": level,
+                    "input_chars": len(request.prompt),
+                    "upstream_latency_ms": upstream_latency_ms,
+                    "total_latency_ms": total_latency_ms,
+                    "provider": settings.GROQ_MODEL,
+                    "status_code": status.HTTP_502_BAD_GATEWAY,
+                    "error": str(e),
+                    "prompt": request.prompt,
+                },
+                exc_info=True,
+            )
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Inference timeout or API error: {str(e)}",
             )
 
-        latency_ms = int((time.perf_counter() - start_time) * 1000)
+        upstream_latency_ms = int((time.perf_counter() - upstream_start) * 1000)
 
         # Step 6: Level 3 Egress Defense (Sanitize output tokens)
         if level == 3:
@@ -146,13 +210,43 @@ async def chat(
             prompt_text=request.prompt,
             response_text=reply,
             char_count=len(request.prompt),
-            latency_ms=latency_ms,
+            latency_ms=upstream_latency_ms,
             is_firewall_blocked=False,
             is_leak_blocked=is_leak,
         )
 
+        total_latency_ms = int((time.perf_counter() - total_start) * 1000)
+
+        token_usage: dict[str, int] = {}
+        if hasattr(response, "usage") and response.usage:
+            token_usage = {
+                "prompt_tokens": getattr(response.usage, "prompt_tokens", 0),
+                "completion_tokens": getattr(response.usage, "completion_tokens", 0),
+                "total_tokens": getattr(response.usage, "total_tokens", 0),
+            }
+
+        logger.info(
+            "LLM completion success",
+            extra={
+                "event": "llm_completion_success",
+                "user_id": request.user_id,
+                "challenge_level": level,
+                "input_chars": len(request.prompt),
+                "output_chars": len(reply),
+                "guardrail_status": "leak_masked" if is_leak else "clean",
+                "is_firewall_blocked": False,
+                "is_leak_blocked": is_leak,
+                "upstream_latency_ms": upstream_latency_ms,
+                "total_latency_ms": total_latency_ms,
+                "provider": settings.GROQ_MODEL,
+                "status_code": status.HTTP_200_OK,
+                "prompt": request.prompt,
+                "token_usage": token_usage,
+            },
+        )
+
         return ChatResponse(
             reply=reply,
-            latency_ms=latency_ms,
+            latency_ms=upstream_latency_ms,
             cooldown_seconds=settings.COOLDOWN_SECONDS,
         )

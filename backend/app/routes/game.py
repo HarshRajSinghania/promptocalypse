@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.database import get_db_context
+from app.logger import logger
 from app.models import (
     LeaderboardEntry,
     SubmitKeyRequest,
@@ -74,18 +75,58 @@ async def submit_key(request: SubmitKeyRequest) -> SubmitKeyResponse:
     outcome = result["status"]
 
     if outcome == STATUS_NOT_FOUND:
+        logger.warning(
+            "Flag submission rejected: user not found",
+            extra={
+                "event": "flag_submission",
+                "user_id": request.user_id,
+                "level": 0,
+                "submitted_key": request.key,
+                "is_correct": False,
+                "penalty_points": 0,
+                "score_delta": 0,
+                "status": outcome,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
 
     if outcome == STATUS_ALREADY_COMPLETED:
+        logger.warning(
+            "Flag submission rejected: arena already completed",
+            extra={
+                "event": "flag_submission",
+                "user_id": request.user_id,
+                "level": 3,
+                "submitted_key": request.key,
+                "is_correct": False,
+                "penalty_points": 0,
+                "score_delta": 0,
+                "status": outcome,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Arena already completed!",
         )
 
     if outcome == STATUS_INCORRECT:
+        penalty = result.get("penalty_points", 25)
+        logger.info(
+            "Flag verification failed: incorrect key",
+            extra={
+                "event": "flag_submission",
+                "user_id": request.user_id,
+                "level": result["unlocked_level"],
+                "submitted_key": request.key,
+                "is_correct": False,
+                "penalty_points": penalty,
+                "score_delta": -penalty,
+                "status": outcome,
+            },
+        )
         return SubmitKeyResponse(
             status=STATUS_INCORRECT,
             unlocked_level=result["unlocked_level"],
@@ -94,6 +135,19 @@ async def submit_key(request: SubmitKeyRequest) -> SubmitKeyResponse:
         )
 
     if outcome == STATUS_CORRECT:
+        logger.info(
+            "Flag verification succeeded: level unlocked",
+            extra={
+                "event": "flag_submission",
+                "user_id": request.user_id,
+                "level": result["unlocked_level"] - 1,
+                "submitted_key": request.key,
+                "is_correct": True,
+                "penalty_points": 0,
+                "score_delta": 0,
+                "status": outcome,
+            },
+        )
         return SubmitKeyResponse(
             status=STATUS_CORRECT,
             unlocked_level=result["unlocked_level"],
@@ -101,6 +155,20 @@ async def submit_key(request: SubmitKeyRequest) -> SubmitKeyResponse:
         )
 
     # STATUS_COMPLETED
+    final_score = result.get("final_score", 0)
+    logger.info(
+        "Flag verification succeeded: arena completed",
+        extra={
+            "event": "flag_submission",
+            "user_id": request.user_id,
+            "level": 3,
+            "submitted_key": request.key,
+            "is_correct": True,
+            "penalty_points": 0,
+            "score_delta": final_score,
+            "status": outcome,
+        },
+    )
     return SubmitKeyResponse(
         status=STATUS_COMPLETED,
         message=result["message"],
