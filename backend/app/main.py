@@ -1,17 +1,25 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import get_settings
 from app.database import init_db
 from app.routes.auth import router as auth_router
 from app.routes.chat import router as chat_router
 from app.routes.game import router as game_router
 
+settings = get_settings()
+
 app = FastAPI(title="AI Jailbreak Arena API")
 
-# Add CORS middleware (allow all origins for dev)
+# Configure CORS middleware
+# Note: Wildcard origin "*" cannot be paired with allow_credentials=True per W3C CORS spec.
+# Using explicit dev origins and allow_origin_regex dynamically mirrors the request origin.
+cors_origins = [o for o in settings.CORS_ORIGINS if o != "*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
+    allow_origin_regex=settings.CORS_ALLOW_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
