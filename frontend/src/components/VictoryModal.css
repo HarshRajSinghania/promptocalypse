@@ -1,0 +1,135 @@
+/* ==========================================================================
+   Victory Modal — Cyberpunk Run Breakdown & Confetti Celebration
+   References: docs/FEATURES.md §3.3, docs/TECH-SPEC.md §5.1
+   ========================================================================== */
+
+.victory-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(10, 11, 16, 0.88);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: fadeIn 0.3s ease-out;
+}
+
+.victory-modal {
+  background-color: var(--surface);
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 30px rgba(0, 255, 157, 0.25), 0 8px 32px rgba(0, 0, 0, 0.6);
+  border-radius: 6px;
+  padding: 2rem;
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  animation: slideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.victory-title {
+  color: var(--accent);
+  margin: 0;
+  text-align: center;
+  font-size: 1.4rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-shadow: 0 0 12px rgba(0, 255, 157, 0.6);
+}
+
+.victory-subtitle {
+  color: var(--text-muted);
+  text-align: center;
+  font-size: 0.88rem;
+  margin: 0;
+}
+
+/* ── Run Breakdown Card ── */
+.victory-breakdown {
+  background-color: var(--surface-elevated);
+  border: 1px solid var(--border);
+  padding: 1.2rem;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  font-size: 0.85rem;
+}
+
+.victory-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.victory-row__label {
+  color: var(--text-muted);
+}
+
+.victory-row__val {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.victory-row__val--penalty {
+  color: var(--error);
+  font-weight: 700;
+}
+
+.victory-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0.4rem 0;
+}
+
+.victory-score-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 1.1rem;
+  font-weight: 800;
+  padding-top: 0.2rem;
+}
+
+.victory-score-val {
+  color: var(--accent);
+  font-size: 1.3rem;
+  text-shadow: 0 0 10px rgba(0, 255, 157, 0.5);
+}
+
+/* ── Actions ── */
+.victory-btn {
+  background-color: var(--accent);
+  color: var(--bg-primary);
+  border: none;
+  border-radius: 4px;
+  padding: 0.75rem;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.victory-btn:hover {
+  opacity: 0.9;
+  box-shadow: 0 0 16px rgba(0, 255, 157, 0.5);
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}

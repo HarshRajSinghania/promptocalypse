@@ -1,0 +1,155 @@
+/* ==========================================================================
+   Key Submission Vault & Failure Animation — Issue #8
+   References: docs/FEATURES.md Phase 3 (§3.1), docs/TECH-SPEC.md §2.3
+   ========================================================================== */
+
+.vault-card {
+  background-color: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  font-family: var(--font-mono);
+  transition: border-color 0.3s ease;
+}
+
+.vault-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.vault-title {
+  color: var(--accent);
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0;
+}
+
+.vault-level-badge {
+  font-size: 0.72rem;
+  padding: 0.15rem 0.4rem;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-muted);
+}
+
+.vault-level-badge strong {
+  color: var(--accent);
+}
+
+/* ── Monospace Input with 8-Frame Shake Animation ── */
+.vault-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.vault-input {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.6rem 0.8rem;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  letter-spacing: 0.03em;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.vault-input:focus:not(:disabled) {
+  border-color: var(--accent);
+  box-shadow: 0 0 8px rgba(0, 255, 157, 0.25);
+}
+
+.vault-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 8-Frame CSS Horizontal Shake Animation on Failure */
+.vault-input--shake {
+  border-color: var(--error) !important;
+  box-shadow: 0 0 10px rgba(255, 59, 92, 0.4);
+  animation: vault-shake-8frame 0.4s ease-in-out;
+}
+
+@keyframes vault-shake-8frame {
+  0% { transform: translateX(0); }
+  12.5% { transform: translateX(-8px); }
+  25% { transform: translateX(8px); }
+  37.5% { transform: translateX(-6px); }
+  50% { transform: translateX(6px); }
+  62.5% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+  87.5% { transform: translateX(-2px); }
+  100% { transform: translateX(0); }
+}
+
+/* ── Submit Button ── */
+.vault-btn {
+  background-color: var(--accent);
+  color: var(--bg-primary);
+  border: none;
+  border-radius: 4px;
+  padding: 0.6rem;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.vault-btn:hover:not(:disabled) {
+  opacity: 0.9;
+  box-shadow: 0 0 12px rgba(0, 255, 157, 0.4);
+}
+
+.vault-btn:disabled {
+  background-color: var(--surface);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  border: 1px solid var(--border);
+}
+
+/* ── Status Messages ── */
+.vault-status {
+  font-size: 0.78rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 3px;
+  line-height: 1.4;
+  animation: fadeIn 0.2s ease-in;
+}
+
+.vault-status--error {
+  background-color: rgba(255, 59, 92, 0.12);
+  border: 1px solid var(--error);
+  color: var(--error);
+  font-weight: 700;
+}
+
+.vault-status--success {
+  background-color: rgba(0, 255, 157, 0.12);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.vault-status--info {
+  background-color: rgba(121, 131, 163, 0.1);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: translateY(0); }
+}

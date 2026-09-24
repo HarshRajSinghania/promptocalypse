@@ -1,5 +1,11 @@
-// TODO: Wire up key submission, leaderboard polling
-export default function SidePanel() {
+import KeyVault from './KeyVault'
+import type { SubmitKeyResponse } from '../types'
+
+interface SidePanelProps {
+  onVictory?: (response: SubmitKeyResponse) => void
+}
+
+export default function SidePanel({ onVictory }: SidePanelProps) {
   return (
     <aside
       style={{
@@ -38,57 +44,8 @@ export default function SidePanel() {
         </p>
       </div>
 
-      {/* Key submission card */}
-      <div
-        style={{
-          backgroundColor: '#1c2132',
-          border: '1px solid #262d43',
-          borderRadius: '4px',
-          padding: '1rem',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '0.5rem',
-        }}
-      >
-        <h3
-          style={{
-            color: '#00ff9d',
-            fontSize: '0.95rem',
-            marginBottom: '0.25rem',
-            fontFamily: "'JetBrains Mono', monospace",
-            textTransform: 'uppercase',
-          }}
-        >
-          Vault Key Submission
-        </h3>
-        <input
-          type="text"
-          placeholder="FLAG{...}"
-          style={{
-            backgroundColor: '#0a0b10',
-            color: '#f0f4fc',
-            border: '1px solid #262d43',
-            borderRadius: '4px',
-            padding: '0.5rem 0.75rem',
-            fontFamily: "'JetBrains Mono', monospace",
-            outline: 'none',
-          }}
-        />
-        <button
-          style={{
-            backgroundColor: '#00ff9d',
-            color: '#0a0b10',
-            border: 'none',
-            borderRadius: '4px',
-            padding: '0.5rem',
-            fontFamily: "'JetBrains Mono', monospace",
-            fontWeight: 'bold',
-            cursor: 'pointer',
-          }}
-        >
-          Verify Key
-        </button>
-      </div>
+      {/* Key submission vault component */}
+      <KeyVault onVictory={onVictory} />
 
       {/* Mini leaderboard placeholder */}
       <div
