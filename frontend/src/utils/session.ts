@@ -110,6 +110,14 @@ export function clearSession(): void {
 }
 
 /**
+ * Checks if a participant is authenticated with a registered profile.
+ */
+export function hasValidSession(): boolean {
+  const session = loadSession()
+  return Boolean(session && session.user_id && (session.email || session.username !== 'GhostRunner'))
+}
+
+/**
  * Returns existing session or creates and persists a default session.
  */
 export function getOrCreateDefaultSession(): SessionState {

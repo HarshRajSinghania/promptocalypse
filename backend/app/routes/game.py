@@ -14,7 +14,12 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.database import get_db_context
-from app.models import LeaderboardEntry, SubmitKeyRequest, SubmitKeyResponse
+from app.models import (
+    LeaderboardEntry,
+    SubmitKeyRequest,
+    SubmitKeyResponse,
+    UserStateResponse,
+)
 from app.scoring import (
     STATUS_ALREADY_COMPLETED,
     STATUS_COMPLETED,
@@ -169,17 +174,35 @@ async def get_leaderboard() -> list[LeaderboardEntry]:
     return entries
 
 
-@router.get("/user/state")
+@router.get("/user/state", response_model=UserStateResponse)
 async def get_user_state(
     user_id: str = Query(..., description="Unique participant ID")
-) -> dict[str, str]:
+) -> UserStateResponse:
     """
     Retrieve current game state and telemetry for a participant.
-
-    Expected processing:
-    Query user metrics, current level, elapsed time, prompt count, and completion status.
     """
-    return {
-        "status": "not_implemented",
-        "message": "TODO: Implement user state and telemetry retrieval",
-    }
+    async with get_db_context() as db:
+        cursor = await db.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+        user = await cursor.fetchone()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Participant not found",
+        )
+
+    user_dict = dict(user)
+    return UserStateResponse(
+        user_id=user_dict["id"],
+        username=user_dict["username"],
+        email=user_dict.get("email"),
+        current_level=user_dict["current_level"],
+        start_time=user_dict["start_time"],
+        completed_at=user_dict.get("completed_at"),
+        total_prompts=user_dict["total_prompts"],
+        total_chars=user_dict["total_chars"],
+        failed_attempts=user_dict["failed_attempts"],
+        final_score=user_dict["final_score"],
+        is_disqualified=bool(user_dict["is_disqualified"]),
+        completed=user_dict.get("completed_at") is not None,
+    )

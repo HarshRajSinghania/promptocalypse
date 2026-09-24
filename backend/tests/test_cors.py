@@ -8,14 +8,33 @@ Verifies:
 - Non-CORS requests (without Origin) behave normally without CORS headers
 """
 
+import asyncio
+import os
+import tempfile
 import unittest
+
 from fastapi.testclient import TestClient
+
+from app.config import get_settings
+from app.database import init_db
 from app.main import app
 
 
 class TestCORSConfiguration(unittest.TestCase):
     def setUp(self):
+        self.temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.temp_db.close()
+        os.environ["DB_PATH"] = self.temp_db.name
+        get_settings.cache_clear()
+        asyncio.run(init_db())
         self.client = TestClient(app)
+
+    def tearDown(self):
+        if os.path.exists(self.temp_db.name):
+            os.remove(self.temp_db.name)
+        for extra in [f"{self.temp_db.name}-wal", f"{self.temp_db.name}-shm"]:
+            if os.path.exists(extra):
+                os.remove(extra)
 
     def test_cors_simple_get_mirrors_origin_and_allows_credentials(self):
         """Simple GET request with Origin must mirror the origin and not return '*' with credentials."""

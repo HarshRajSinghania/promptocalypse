@@ -117,8 +117,16 @@ export default function Header({ session: propSession }: HeaderProps) {
       <div className="hud-brand">
         <span className="hud-logo">AI Jailbreak Arena</span>
         {internalSession.username && (
-          <span className="hud-user-badge">
+          <span
+            className="hud-user-badge"
+            title={internalSession.email ? `Email: ${internalSession.email}` : undefined}
+          >
             AGENT: <strong>{internalSession.username}</strong>
+            {internalSession.email && (
+              <span style={{ opacity: 0.7, marginLeft: '0.35rem', fontSize: '0.7rem' }}>
+                ({internalSession.email})
+              </span>
+            )}
           </span>
         )}
       </div>

@@ -24,6 +24,7 @@ _CREATE_TABLES = """
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     username TEXT NOT NULL COLLATE NOCASE,
+    email TEXT NULL COLLATE NOCASE,
     current_level INTEGER NOT NULL DEFAULT 1 CHECK(current_level BETWEEN 1 AND 3),
     start_time TIMESTAMP NOT NULL,
     completed_at TIMESTAMP NULL,
@@ -71,6 +72,9 @@ CREATE TABLE IF NOT EXISTS submissions (
 _CREATE_INDEXES = """
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username
     ON users(username);
+
+CREATE INDEX IF NOT EXISTS idx_users_email
+    ON users(email);
 
 CREATE INDEX IF NOT EXISTS idx_leaderboard_rank
     ON users(
@@ -126,6 +130,13 @@ async def init_db() -> None:
     try:
         await _apply_pragmas(db)
         await db.executescript(_CREATE_TABLES)
+
+        # Migration: Ensure email column exists if users table was created earlier
+        async with db.execute("PRAGMA table_info(users)") as cursor:
+            columns = [row[1] for row in await cursor.fetchall()]
+            if "email" not in columns:
+                await db.execute("ALTER TABLE users ADD COLUMN email TEXT NULL COLLATE NOCASE")
+
         await db.executescript(_CREATE_INDEXES)
         await db.commit()
     finally:
