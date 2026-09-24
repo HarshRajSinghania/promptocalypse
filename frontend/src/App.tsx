@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Header from './components/Header.tsx'
 import ArenaPanel from './components/ArenaPanel.tsx'
 import SidePanel from './components/SidePanel.tsx'
 import VictoryModal from './components/VictoryModal.tsx'
 import RegisterModal from './components/RegisterModal.tsx'
 import type { SessionState, SubmitKeyResponse } from './types'
-import { loadSession, hasValidSession } from './utils/session'
+import { loadSession, hasValidSession, SESSION_UPDATE_EVENT } from './utils/session'
 
 export default function App() {
   const [session, setSession] = useState<SessionState | null>(() => {
@@ -14,6 +14,26 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     return hasValidSession()
   })
+
+  useEffect(() => {
+    const handleUpdate = (e: Event) => {
+      const customEvent = e as CustomEvent<SessionState | null>
+      if (customEvent.detail) {
+        setSession(customEvent.detail)
+        setIsAuthenticated(hasValidSession())
+      } else {
+        const reloaded = loadSession()
+        setSession(reloaded)
+        setIsAuthenticated(hasValidSession())
+      }
+    }
+    window.addEventListener(SESSION_UPDATE_EVENT, handleUpdate)
+    window.addEventListener('storage', handleUpdate)
+    return () => {
+      window.removeEventListener(SESSION_UPDATE_EVENT, handleUpdate)
+      window.removeEventListener('storage', handleUpdate)
+    }
+  }, [])
   const [showVictory, setShowVictory] = useState<boolean>(() => {
     const s = loadSession()
     return Boolean(s?.completed)
@@ -45,7 +65,7 @@ export default function App() {
       )}
       <Header session={session} />
       <main className="main-content">
-        <ArenaPanel />
+        <ArenaPanel session={session} />
         <SidePanel onVictory={handleVictory} />
       </main>
       {showVictory && (
