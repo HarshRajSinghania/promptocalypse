@@ -29,6 +29,14 @@ export interface SessionState {
   user_id: string;
   username: string;
   current_level: number;
-  active_cooldown_until: number | null;
-  local_chat_history: Record<string, ChatMessage[]>;
+  active_cooldown_until?: number | null;
+  local_chat_history?: Record<string, ChatMessage[]>;
+  start_time?: string;
+  total_prompts?: number;
+  total_chars?: number;
+  failed_attempts?: number;
+  completed?: boolean;
+  final_score?: number;
+  cached_at?: number;
 }
+
