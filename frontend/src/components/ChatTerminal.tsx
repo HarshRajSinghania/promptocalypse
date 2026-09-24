@@ -1,5 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import type { ChatMessage } from '../types'
+import {
+  COOLDOWN_MS,
+  NOTICE_DISMISS_MS,
+  feedbackForFailure,
+  formatRttLabel,
+  type ChatFailureKind,
+} from '../utils/chatFeedback'
 import { sendPrompt } from '../api/client'
 import { loadSession, saveSession } from '../utils/session'
 import {
@@ -14,21 +21,29 @@ import './ChatTerminal.css'
 
 const MAX_CHARS = 1000
 const WARN_CHARS = 900
-const COOLDOWN_MS = 3000
 
 export interface ChatTerminalProps {
   userId?: string
   currentLevel?: number
   /**
    * Callback to send a prompt to the backend.
-   * Returns the bot reply text, optional status ('blocked'), latency_ms, cooldown_seconds.
+   * Returns the bot reply text, optional status ('blocked' for firewall
+   * intercepts), the backend latency_ms / cooldown_seconds reported by the
+   * API and the measured round-trip time from X-Process-Time (Issue #27).
    */
   onSendPrompt?: (prompt: string) => Promise<{
     reply: string
     status?: string
     latency_ms?: number
     cooldown_seconds?: number
+    /** Measured X-Process-Time round trip; null when the header is absent. */
+    latencyMs?: number | null
   }>
+}
+
+interface ChatNotice {
+  kind: ChatFailureKind
+  text: string
 }
 
 export default function ChatTerminal({
@@ -42,8 +57,11 @@ export default function ChatTerminal({
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isCoolingDown, setIsCoolingDown] = useState(false)
+  const [notice, setNotice] = useState<ChatNotice | null>(null)
+  const [rttMs, setRttMs] = useState<number | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const currentMessages = messagesByLevel[currentLevel] || []
 
@@ -51,6 +69,33 @@ export default function ChatTerminal({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' })
   }, [currentMessages, isLoading, currentLevel])
+
+  // Auto-dismiss the toast banner after it has been visible for a while
+  useEffect(() => {
+    if (!notice) return
+    const timer = setTimeout(() => setNotice(null), NOTICE_DISMISS_MS)
+    return () => clearTimeout(timer)
+  }, [notice])
+
+  const clearCooldown = useCallback(() => {
+    if (cooldownTimerRef.current !== null) {
+      clearTimeout(cooldownTimerRef.current)
+      cooldownTimerRef.current = null
+    }
+  }, [])
+
+  // Starts (or restarts) the existing 3-second submission cooldown.
+  const startCooldown = useCallback(() => {
+    clearCooldown()
+    setIsCoolingDown(true)
+    cooldownTimerRef.current = setTimeout(() => {
+      cooldownTimerRef.current = null
+      setIsCoolingDown(false)
+    }, COOLDOWN_MS)
+  }, [clearCooldown])
+
+  // Clear any pending cooldown timer on unmount
+  useEffect(() => clearCooldown, [clearCooldown])
 
   const handleSubmit = useCallback(async () => {
     const trimmed = input.trim()
@@ -72,9 +117,9 @@ export default function ChatTerminal({
     })
     setInput('')
 
-    // 2. Start 3-second visual cooldown
-    setIsCoolingDown(true)
-    setTimeout(() => setIsCoolingDown(false), COOLDOWN_MS)
+    // 2. Start the 3-second submission cooldown (Issue #27 tracks the timer so
+    //    a gateway failure can re-enable submission before it expires).
+    startCooldown()
 
     // 3. Set typing / loading indicator
     setIsLoading(true)
@@ -93,6 +138,7 @@ export default function ChatTerminal({
         status?: string
         latency_ms?: number
         cooldown_seconds?: number
+        latencyMs?: number | null
       }
 
       if (onSendPrompt) {
@@ -122,7 +168,21 @@ export default function ChatTerminal({
         saveChatHistory(nextMap)
         return nextMap
       })
+
+      // Issue #27: footer shows the measured round-trip (null → hidden, the
+      // value is never fabricated) and a success clears any error toast.
+      setRttMs(response.latencyMs ?? null)
+      setNotice(null)
     } catch (err: unknown) {
+      // Issue #27: classify the failure for the toast banner & retry policy.
+      const feedback = feedbackForFailure(err)
+
+      // Keep the footer RTT in sync when the failure carried a measured latency.
+      const measured = (err as { latencyMs?: number | null } | null)?.latencyMs
+      if (typeof measured === 'number' && Number.isFinite(measured)) {
+        setRttMs(measured)
+      }
+
       const alertText = formatErrorAlert(err)
       const alertMsg = createChatMessage({
         sender: 'system_alert',
@@ -138,10 +198,31 @@ export default function ChatTerminal({
         saveChatHistory(nextMap)
         return nextMap
       })
+
+      // Issue #27: toast banner with the exact copy for this failure kind.
+      setNotice({ kind: feedback.kind, text: feedback.notice })
+
+      if (feedback.reenableSubmission) {
+        // 502 / network failure: re-enable submission so the user can retry.
+        clearCooldown()
+        setIsCoolingDown(false)
+      } else {
+        // 429: keep submission disabled for the full 3-second rate limit window.
+        startCooldown()
+      }
     } finally {
       setIsLoading(false)
     }
-  }, [input, isCoolingDown, isLoading, currentLevel, onSendPrompt, userId])
+  }, [
+    input,
+    isCoolingDown,
+    isLoading,
+    currentLevel,
+    onSendPrompt,
+    userId,
+    startCooldown,
+    clearCooldown,
+  ])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Enter without Shift submits
@@ -166,6 +247,9 @@ export default function ChatTerminal({
       : charCount >= WARN_CHARS
         ? 'char-counter char-counter--warning'
         : 'char-counter'
+
+  // Footer RTT label — only rendered when a real latency was measured.
+  const rttLabel = formatRttLabel(rttMs)
 
   return (
     <section className="chat-terminal">
@@ -256,6 +340,25 @@ export default function ChatTerminal({
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Toast banner — Issue #27: rate limit & gateway failure notices */}
+      {notice && (
+        <div
+          className={`chat-terminal__toast chat-terminal__toast--${notice.kind}`}
+          role="status"
+          aria-live="polite"
+        >
+          <span className="chat-terminal__toast-text">{notice.text}</span>
+          <button
+            type="button"
+            className="chat-terminal__toast-dismiss"
+            aria-label="Dismiss notification"
+            onClick={() => setNotice(null)}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {/* Input area */}
       <div className="chat-terminal__input-area">
         <div className="chat-terminal__textarea-wrapper">
@@ -282,6 +385,13 @@ export default function ChatTerminal({
           {isCoolingDown ? 'WAIT' : 'SEND'}
         </button>
       </div>
+
+      {/* Terminal footer — Issue #27: request latency from X-Process-Time */}
+      <footer className="chat-terminal__footer">
+        {rttLabel && (
+          <span className="chat-terminal__rtt">{rttLabel}</span>
+        )}
+      </footer>
     </section>
   )
 }
