@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     COOLDOWN_SECONDS: float = 3.0
     MAX_PROMPT_LENGTH: int = 1000
     MAX_TOKENS: int = 150
+    # Issue #45: LLM inference temperature increased from 0.1 to 0.4 (0.35 - 0.5 range)
+    # to avoid overly deterministic refusals and allow persona roleplay.
+    LLM_TEMPERATURE: float = 0.4
     # Issue #28: deterministic mock LLM provider. When true, /api/chat never
     # calls client.chat.completions.create and serves fixed async mock replies.
     MOCK_LLM_MODE: bool = False
