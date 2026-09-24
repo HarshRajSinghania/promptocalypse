@@ -224,7 +224,7 @@ async def chat(
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": request.prompt},
                     ],
-                    temperature=0.2,
+                    temperature=settings.LLM_TEMPERATURE,
                     max_tokens=settings.MAX_TOKENS,
                     timeout=8.0,
                 )
