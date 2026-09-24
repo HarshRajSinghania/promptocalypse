@@ -8,6 +8,7 @@ import {
   saveSession,
   clearSession,
   getOrCreateDefaultSession,
+  hasValidSession,
 } from './session.ts'
 import type { SessionState } from '../types/index.ts'
 
@@ -160,5 +161,28 @@ describe('Cyberpunk HUD & Session Logic', () => {
       const secondCall = getOrCreateDefaultSession()
       assert.equal(secondCall.user_id, session.user_id)
     })
+
+    it('hasValidSession correctly identifies registered sessions with email', () => {
+      clearSession()
+      assert.equal(hasValidSession(), false)
+
+      // GhostRunner dummy session without email is not considered authenticated
+      saveSession({
+        user_id: 'usr_guest',
+        username: 'GhostRunner',
+        current_level: 1,
+      })
+      assert.equal(hasValidSession(), false)
+
+      // Registered user with email is authenticated
+      saveSession({
+        user_id: 'usr_real',
+        username: 'RealUser',
+        email: 'real@domain.com',
+        current_level: 1,
+      })
+      assert.equal(hasValidSession(), true)
+    })
   })
 })
+

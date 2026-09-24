@@ -6,10 +6,14 @@ from pydantic import BaseModel, Field
 class RegisterRequest(BaseModel):
     username: str = Field(
         ...,
-        min_length=3,
-        max_length=20,
-        pattern=r"^[a-zA-Z0-9_-]+$",
-        description="Unique username containing letters, numbers, underscores, or hyphens",
+        min_length=2,
+        max_length=50,
+        pattern=r"^[a-zA-Z0-9_\- ]+$",
+        description="Participant full name or handle (2-50 chars)",
+    )
+    email: Optional[str] = Field(
+        None,
+        description="Participant registered email address",
     )
 
 
@@ -31,6 +35,7 @@ class SubmitKeyRequest(BaseModel):
 class RegisterResponse(BaseModel):
     user_id: str
     username: str
+    email: Optional[str] = None
     current_level: int = 1
     start_time: str
     total_prompts: int = 0
@@ -69,6 +74,7 @@ class LeaderboardEntry(BaseModel):
 class UserStateResponse(BaseModel):
     user_id: str
     username: str
+    email: Optional[str] = None
     current_level: int
     start_time: str
     completed_at: Optional[str] = None

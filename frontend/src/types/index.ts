@@ -1,6 +1,7 @@
 export interface User {
   user_id: string;
   username: string;
+  email?: string;
   current_level: number;
   start_time: string;
   total_prompts: number;
@@ -28,6 +29,7 @@ export interface LeaderboardEntry {
 export interface SessionState {
   user_id: string;
   username: string;
+  email?: string;
   current_level: number;
   active_cooldown_until?: number | null;
   local_chat_history?: Record<string, ChatMessage[]>;
