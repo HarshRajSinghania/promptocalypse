@@ -21,11 +21,34 @@ export async function registerUser(
   return (await res.json()) as User
 }
 
-export async function sendPrompt(userId: string, prompt: string) {
-  // TODO: POST /api/chat
-  void userId;
-  void prompt;
-  throw new Error('Not implemented');
+export interface ChatApiResponse {
+  reply: string;
+  status?: 'success' | 'blocked' | string;
+  latency_ms?: number;
+  cooldown_seconds?: number;
+}
+
+export async function sendPrompt(
+  userId: string,
+  prompt: string
+): Promise<ChatApiResponse> {
+  const res = await fetch(`${API_BASE}/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: userId, prompt }),
+  })
+  if (!res.ok) {
+    const errorData = (await res.json().catch(() => ({}))) as {
+      detail?: string
+    }
+    const err = new Error(
+      errorData.detail || `Chat request failed with status ${res.status}`
+    ) as Error & { status?: number; detail?: string }
+    err.status = res.status
+    err.detail = errorData.detail
+    throw err
+  }
+  return (await res.json()) as ChatApiResponse
 }
 
 export async function submitKey(
