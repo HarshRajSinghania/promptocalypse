@@ -1,0 +1,184 @@
+/* ==========================================================================
+   Cyberpunk HUD & Live Telemetry Bar — Issue #6
+   References: docs/FEATURES.md Phase 1 & 2, docs/TECH-SPEC.md §5 & §7
+   ========================================================================== */
+
+.hud-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.65rem 1.5rem;
+  background-color: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  user-select: none;
+  position: relative;
+  z-index: 10;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+/* ── Brand / Status Title ── */
+.hud-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.hud-logo {
+  color: var(--accent);
+  font-weight: 800;
+  font-size: 1.05rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-shadow: 0 0 10px rgba(0, 255, 157, 0.4);
+}
+
+.hud-user-badge {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  background-color: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-muted);
+}
+
+.hud-user-badge strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* ── Segmented Step Indicator ── */
+.hud-steps {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--bg-primary);
+  padding: 0.3rem 0.6rem;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+.hud-step {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 3px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 1px solid transparent;
+  transition: all 0.3s ease;
+}
+
+.hud-step__icon {
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+/* Completed Step */
+.hud-step--completed {
+  background-color: rgba(0, 255, 157, 0.12);
+  color: var(--accent);
+  border-color: rgba(0, 255, 157, 0.35);
+}
+
+.hud-step--completed .hud-step__icon {
+  font-weight: 900;
+}
+
+/* Active Step - Pulsing */
+.hud-step--active {
+  background-color: rgba(0, 255, 157, 0.2);
+  color: #ffffff;
+  border-color: var(--accent);
+  box-shadow: 0 0 12px rgba(0, 255, 157, 0.5);
+  animation: hud-step-pulse 1.8s infinite ease-in-out;
+}
+
+@keyframes hud-step-pulse {
+  0% {
+    box-shadow: 0 0 6px rgba(0, 255, 157, 0.35);
+    border-color: rgba(0, 255, 157, 0.6);
+  }
+  50% {
+    box-shadow: 0 0 16px rgba(0, 255, 157, 0.8);
+    border-color: var(--accent);
+  }
+  100% {
+    box-shadow: 0 0 6px rgba(0, 255, 157, 0.35);
+    border-color: rgba(0, 255, 157, 0.6);
+  }
+}
+
+/* Locked Step */
+.hud-step--locked {
+  background-color: transparent;
+  color: var(--text-muted);
+  opacity: 0.55;
+  border-color: rgba(38, 45, 67, 0.5);
+}
+
+/* ── Live Telemetry Group ── */
+.hud-telemetry {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  font-size: 0.85rem;
+}
+
+.hud-metric {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.hud-metric__label {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.hud-metric__value {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+/* Stopwatch Timer */
+.hud-metric__value--time {
+  color: #f0f4fc;
+  font-variant-numeric: tabular-nums;
+  background-color: var(--bg-primary);
+  padding: 0.15rem 0.45rem;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
+/* Penalty highlights */
+.hud-metric__penalty {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-left: 0.2rem;
+}
+
+.hud-metric__penalty--active {
+  color: var(--error);
+  font-weight: 700;
+}
+
+/* Score Highlight */
+.hud-metric__value--score {
+  color: var(--accent);
+  text-shadow: 0 0 8px rgba(0, 255, 157, 0.3);
+}
+
+.hud-metric__value--score-warning {
+  color: var(--warning);
+}
+
+.hud-metric__value--score-danger {
+  color: var(--error);
+}
