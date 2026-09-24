@@ -1,7 +1,9 @@
 """
 Security and progressive defense filters for AI Jailbreak Arena.
 
-Implements Issue #2: [Security] Level 2 Ingress Regex Filter & Level 3 Egress Token Scrubber.
+Implements:
+- Issue #2: [Security] Level 2 Ingress Regex Filter & Level 3 Egress Token Scrubber.
+- Issue #29: [Security] Input Sanitization & Unicode Normalization.
 References:
 - docs/FEATURES.md §2.2 (Ingress Defense Engine) & §2.4 (Egress Token Scrubber)
 - docs/TECH-SPEC.md §4 (Defense Filter Engine Specification)
@@ -10,6 +12,7 @@ References:
 
 from datetime import datetime, timezone
 import re
+import unicodedata
 
 import aiosqlite
 
@@ -60,20 +63,91 @@ SYSTEM_PROMPTS = {
 }
 
 # ---------------------------------------------------------------------------
+# Unicode Normalization & Homoglyph Mappings (Issue #29)
+# ---------------------------------------------------------------------------
+
+HOMOGLYPH_MAPPING = {
+    # Cyrillic lowercase
+    "а": "a", "с": "c", "е": "e", "і": "i", "ј": "j", "к": "k",
+    "о": "o", "р": "p", "ѕ": "s", "т": "t", "у": "y", "х": "x",
+    # Cyrillic uppercase
+    "А": "A", "В": "B", "С": "C", "Е": "E", "Н": "H", "І": "I",
+    "Ј": "J", "К": "K", "М": "M", "О": "O", "Р": "P", "Ѕ": "S",
+    "Т": "T", "Х": "X", "У": "Y",
+    # Greek lowercase
+    "α": "a", "β": "b", "ε": "e", "κ": "k", "ο": "o", "ρ": "p",
+    "τ": "t", "υ": "y", "ν": "v",
+    # Greek uppercase
+    "Α": "A", "Β": "B", "Ε": "E", "Η": "H", "Ι": "I", "Κ": "K",
+    "Μ": "M", "Ν": "N", "Ο": "O", "Ρ": "P", "Τ": "T", "Υ": "Y",
+    "Χ": "X",
+}
+HOMOGLYPH_TABLE = str.maketrans(HOMOGLYPH_MAPPING)
+MARKDOWN_DELIMITERS_TABLE = str.maketrans("", "", "*_~`")
+
+
+def normalize_ingress_prompt(prompt: str) -> str:
+    """
+    Normalizes an ingress prompt for security keyword inspection (Issue #29).
+
+    1. Applies Unicode NFKD normalization (decomposing fullwidth characters,
+       mathematical alphanumeric symbols, ligatures, and accented letters).
+    2. Strips zero-width characters (Cf format characters) and non-printable control
+       characters (Cc), while preserving standard whitespace (\\t, \\n, \\r).
+    3. Strips combining diacritical marks (Mn, Mc, Me).
+    4. Maps visual homoglyphs (Cyrillic and Greek characters that visually imitate
+       Latin letters) to their ASCII Latin equivalents.
+    """
+    # 1. NFKD normalization
+    decomposed = unicodedata.normalize("NFKD", prompt)
+
+    # 2 & 3. Strip zero-width, non-printable control characters, and combining marks
+    filtered_chars = []
+    for char in decomposed:
+        if char in ("\n", "\r", "\t"):
+            filtered_chars.append(char)
+            continue
+        category = unicodedata.category(char)
+        if category in ("Cf", "Cc", "Mn", "Mc", "Me", "Cs", "Co", "Cn"):
+            continue
+        filtered_chars.append(char)
+
+    filtered_text = "".join(filtered_chars)
+
+    # 4. Map Cyrillic/Greek homoglyphs
+    normalized = filtered_text.translate(HOMOGLYPH_TABLE)
+    return normalized
+
+
+# ---------------------------------------------------------------------------
 # Defense Filter Functions
 # ---------------------------------------------------------------------------
 
 
 def check_level2_ingress(prompt: str) -> bool:
     """
-    Level 2 Ingress Filter.
+    Level 2 Ingress Filter with Unicode Normalization and Sanitization (Issue #2 & #29).
 
     Evaluates prompt against the prohibited security keyword pattern:
     (?i)\\b(password|key|flag|secret|reveal)\\b
 
+    Checks both:
+    1. The Unicode-normalized and homoglyph-resolved prompt.
+    2. The prompt with inline markdown delimiters (*, _, ~, `) stripped to catch
+       markdown evasion attempts (e.g. 'pass**word**' or 'p*a*s*s*w*o*r*d').
+
     Returns True if any prohibited keyword is detected, False otherwise.
     """
-    return bool(L2_INGRESS_REGEX.search(prompt))
+    normalized = normalize_ingress_prompt(prompt)
+    if L2_INGRESS_REGEX.search(normalized):
+        return True
+
+    # Check without markdown delimiters
+    no_markdown = normalized.translate(MARKDOWN_DELIMITERS_TABLE)
+    if L2_INGRESS_REGEX.search(no_markdown):
+        return True
+
+    return False
 
 
 def scrub_level3_egress(completion_text: str) -> tuple[str, bool]:
