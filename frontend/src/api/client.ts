@@ -1,3 +1,5 @@
+import type { SubmitKeyResponse } from '../types'
+
 export const API_BASE = '/api';
 
 export async function registerUser(username: string) {
@@ -13,11 +15,22 @@ export async function sendPrompt(userId: string, prompt: string) {
   throw new Error('Not implemented');
 }
 
-export async function submitKey(userId: string, key: string) {
-  // TODO: POST /api/submit-key
-  void userId;
-  void key;
-  throw new Error('Not implemented');
+export async function submitKey(
+  userId: string,
+  key: string
+): Promise<SubmitKeyResponse> {
+  const res = await fetch(`${API_BASE}/submit-key`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: userId, key }),
+  })
+  if (!res.ok) {
+    const errorData = (await res.json().catch(() => ({}))) as {
+      detail?: string
+    }
+    throw new Error(errorData.detail || 'Key submission failed')
+  }
+  return (await res.json()) as SubmitKeyResponse
 }
 
 export async function fetchLeaderboard() {

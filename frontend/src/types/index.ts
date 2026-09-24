@@ -40,3 +40,17 @@ export interface SessionState {
   cached_at?: number;
 }
 
+export interface SubmitKeyResponse {
+  status: 'correct' | 'incorrect' | 'completed' | string;
+  unlocked_level?: number;
+  message: string;
+  penalty_points?: number;
+  final_score?: number;
+  completion_time?: string;
+  stats?: {
+    total_prompts: number;
+    elapsed_minutes: number;
+    failed_attempts: number;
+  };
+}
+
