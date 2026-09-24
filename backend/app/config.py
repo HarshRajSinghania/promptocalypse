@@ -18,6 +18,8 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
     ]
     CORS_ALLOW_ORIGIN_REGEX: str = r"^https?://.*$"
+    LOG_FILE_PATH: str = "logs/arena_debug.log"
+    LOG_LEVEL: str = "INFO"
 
     model_config = SettingsConfigDict(
         env_file=".env",
