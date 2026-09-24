@@ -69,49 +69,61 @@ GROQ_KEY_PATTERN = re.compile(r"gsk_[A-Za-z0-9_]{10,}")
 
 def redact_text(text: str) -> str:
     """Scrub sensitive keys and tokens from a text string."""
-    if not text:
+    if not isinstance(text, str):
         return text
 
-    # Redact configured GROQ_API_KEY if present
-    settings = get_settings()
-    if settings.GROQ_API_KEY and len(settings.GROQ_API_KEY) > 5:
-        text = text.replace(settings.GROQ_API_KEY, "[REDACTED_API_KEY]")
+    try:
+        settings = get_settings()
+        if settings.GROQ_API_KEY and len(settings.GROQ_API_KEY) > 5:
+            text = text.replace(settings.GROQ_API_KEY, "[REDACTED_API_KEY]")
 
-    # Redact Bearer tokens
-    text = BEARER_PATTERN.sub(r"\1[REDACTED_TOKEN]", text)
-
-    # Redact generic Groq API keys
-    text = GROQ_KEY_PATTERN.sub("[REDACTED_API_KEY]", text)
+        text = BEARER_PATTERN.sub(r"\1[REDACTED_TOKEN]", text)
+        text = GROQ_KEY_PATTERN.sub("[REDACTED_API_KEY]", text)
+    except Exception:
+        pass
 
     return text
 
 
 def redact_data(obj: Any) -> Any:
     """Recursively scrub sensitive data from dictionaries, lists, and primitives."""
-    if isinstance(obj, str):
-        return redact_text(obj)
-    if isinstance(obj, dict):
-        cleaned: dict[str, Any] = {}
-        for k, v in obj.items():
-            if str(k).lower() in SENSITIVE_KEYS:
-                if isinstance(v, str) and v.lower().startswith("bearer "):
-                    cleaned[k] = "Bearer [REDACTED_TOKEN]"
+    try:
+        if isinstance(obj, str):
+            return redact_text(obj)
+        if isinstance(obj, dict):
+            cleaned: dict[str, Any] = {}
+            for k, v in obj.items():
+                if str(k).lower() in SENSITIVE_KEYS:
+                    if isinstance(v, str) and v.lower().startswith("bearer "):
+                        cleaned[str(k)] = "Bearer [REDACTED_TOKEN]"
+                    else:
+                        cleaned[str(k)] = "[REDACTED]"
                 else:
-                    cleaned[k] = "[REDACTED]"
-            else:
-                cleaned[k] = redact_data(v)
-        return cleaned
-    if isinstance(obj, (list, tuple)):
-        return [redact_data(item) for item in obj]
-    return obj
+                    cleaned[str(k)] = redact_data(v)
+            return cleaned
+        if isinstance(obj, (list, tuple)):
+            return [redact_data(item) for item in obj]
+        if isinstance(obj, set):
+            return [redact_data(item) for item in obj]
+        return obj
+    except Exception:
+        return str(obj)
 
 
 class JSONFormatter(logging.Formatter):
     """Formats log records as one-line JSON documents with UTC timestamps."""
 
     def format(self, record: logging.LogRecord) -> str:
-        data = self.record_to_dict(record)
-        return json.dumps(data)
+        try:
+            data = self.record_to_dict(record)
+            return json.dumps(data, default=str)
+        except Exception as e:
+            return json.dumps({
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
+                "level": "ERROR",
+                "message": f"Log formatting failed: {str(e)}",
+                "raw": str(getattr(record, "msg", "")),
+            })
 
     def record_to_dict(self, record: logging.LogRecord) -> dict[str, Any]:
         """Convert a LogRecord to a dictionary ready for JSON serialization."""
@@ -134,6 +146,45 @@ class JSONFormatter(logging.Formatter):
             entry["exception"] = self.formatException(record.exc_info)
 
         return redact_data(entry)
+
+
+class ArenaLogger(logging.Logger):
+    """
+    Custom Logger that accepts arbitrary keyword arguments and packs them
+    into the `extra` dictionary for JSON telemetry formatting.
+    """
+
+    def _log(
+        self,
+        level: int,
+        msg: object,
+        args: Any,
+        exc_info: Any = None,
+        extra: Any = None,
+        stack_info: bool = False,
+        stacklevel: int = 1,
+        **kwargs: Any,
+    ) -> None:
+        if extra is None:
+            extra = {}
+        elif not isinstance(extra, dict):
+            extra = {"extra_info": str(extra)}
+
+        if kwargs:
+            extra = {**kwargs, **extra}
+
+        super()._log(
+            level,
+            msg,
+            args,
+            exc_info=exc_info,
+            extra=extra,
+            stack_info=stack_info,
+            stacklevel=stacklevel,
+        )
+
+
+logging.setLoggerClass(ArenaLogger)
 
 
 class RingBufferHandler(logging.Handler):
