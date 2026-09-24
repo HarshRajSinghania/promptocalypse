@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     COOLDOWN_SECONDS: float = 3.0
     MAX_PROMPT_LENGTH: int = 1000
     MAX_TOKENS: int = 150
+    # Issue #28: deterministic mock LLM provider. When true, /api/chat never
+    # calls client.chat.completions.create and serves fixed async mock replies.
+    MOCK_LLM_MODE: bool = False
     CORS_ORIGINS: list[str] = [
         "http://localhost:3000",
         "http://localhost:5173",
