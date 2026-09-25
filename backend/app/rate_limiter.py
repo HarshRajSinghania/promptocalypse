@@ -104,3 +104,81 @@ def get_rate_limiter(
     elif settings and _global_limiter.cooldown_seconds != settings.COOLDOWN_SECONDS:
         _global_limiter.cooldown_seconds = settings.COOLDOWN_SECONDS
     return _global_limiter
+
+class KeySubmissionRateLimiter:
+    """
+    Independent rate-limiter for /api/submit-key (Issue #43).
+    - Base cooldown: 2.0 seconds between any submission attempts.
+    - Escalating penalty: After 3 failed key submissions in a row, enforces a 30-second lockout.
+    """
+
+    def __init__(
+        self,
+        base_cooldown: float = 2.0,
+        lockout_duration: float = 30.0,
+        max_failures: int = 3,
+        time_func: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.base_cooldown = base_cooldown
+        self.lockout_duration = lockout_duration
+        self.max_failures = max_failures
+        self.time_func = time_func
+        # user_id -> (last_attempt_timestamp, consecutive_failures)
+        self._state: dict[str, tuple[float, int]] = {}
+
+    def check(self, user_id: str) -> None:
+        if user_id not in self._state:
+            return
+            
+        last_time, failures = self._state[user_id]
+        now = self.time_func()
+        elapsed = now - last_time
+        
+        current_cooldown = self.lockout_duration if failures >= self.max_failures else self.base_cooldown
+        
+        if elapsed < current_cooldown:
+            remaining = current_cooldown - elapsed
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Too many attempts. Wait {remaining:.1f}s",
+                headers={"Retry-After": str(max(1, int(round(remaining))))},
+            )
+
+    def record_attempt(self, user_id: str, is_correct: bool) -> None:
+        now = self.time_func()
+        failures = 0
+        
+        if user_id in self._state:
+            _, old_failures = self._state[user_id]
+            if not is_correct:
+                failures = old_failures + 1
+            else:
+                failures = 0
+        else:
+            failures = 1 if not is_correct else 0
+            
+        self._state[user_id] = (now, failures)
+
+        if len(self._state) > 1000:
+            self._prune(now)
+
+    def _prune(self, now: float) -> None:
+        cutoff = now - max(self.base_cooldown, self.lockout_duration) * 2
+        stale_keys = [k for k, (last_time, _) in self._state.items() if last_time < cutoff]
+        for k in stale_keys:
+            del self._state[k]
+
+    def reset(self, user_id: Optional[str] = None) -> None:
+        if user_id is not None:
+            self._state.pop(user_id, None)
+        else:
+            self._state.clear()
+
+
+_submit_limiter: Optional[KeySubmissionRateLimiter] = None
+
+def get_submit_limiter() -> KeySubmissionRateLimiter:
+    global _submit_limiter
+    if _submit_limiter is None:
+        _submit_limiter = KeySubmissionRateLimiter()
+    return _submit_limiter

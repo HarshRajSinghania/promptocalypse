@@ -9,9 +9,10 @@ References:
 - docs/FEATURES.md Phase 3 & Phase 4
 """
 
+from typing import Annotated
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.database import get_db_context
 from app.logger import logger
@@ -21,6 +22,7 @@ from app.models import (
     SubmitKeyResponse,
     UserStateResponse,
 )
+from app.rate_limiter import KeySubmissionRateLimiter, get_submit_limiter
 from app.scoring import (
     STATUS_ALREADY_COMPLETED,
     STATUS_COMPLETED,
@@ -55,7 +57,7 @@ def _compute_duration_seconds(start_iso: str, end_iso: str) -> int:
 
 
 @router.post("/submit-key", response_model=SubmitKeyResponse)
-async def submit_key(request: SubmitKeyRequest) -> SubmitKeyResponse:
+async def submit_key(request: SubmitKeyRequest, limiter: Annotated[KeySubmissionRateLimiter, Depends(get_submit_limiter)]) -> SubmitKeyResponse:
     """
     Evaluate a submitted flag key for the participant's current level.
 
@@ -67,6 +69,21 @@ async def submit_key(request: SubmitKeyRequest) -> SubmitKeyResponse:
     4. If correct on Level 3: calculate final score, set completion timestamp.
     5. If incorrect: increment failed_attempts counter (25 pt penalty).
     """
+
+    try:
+        limiter.check(request.user_id)
+    except HTTPException as e:
+        logger.warning(
+            "Rate limit cooldown active for submit-key",
+            extra={
+                "event": "submit_key_rate_limit_exceeded",
+                "user_id": request.user_id,
+                "status_code": status.HTTP_429_TOO_MANY_REQUESTS,
+                "detail": e.detail,
+            },
+        )
+        raise e
+
     async with get_db_context() as db:
         result = await verify_and_progress(
             db=db, user_id=request.user_id, submitted_key=request.key
