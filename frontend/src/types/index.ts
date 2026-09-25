@@ -4,9 +4,10 @@ export interface User {
   email?: string;
   current_level: number;
   start_time: string;
-  total_prompts: number;
+  total_total_prompts: number;
   failed_attempts: number;
   completed: boolean;
+  status?: string;
 }
 
 export interface ChatMessage {
@@ -25,10 +26,11 @@ export interface LeaderboardEntry {
   rank: number;
   username: string;
   current_level: number;
-  score: number;
-  prompts: number;
-  chars: number;
+  final_score: number;
+  total_prompts: number;
+  total_chars: number;
   completed: boolean;
+  status?: string;
 }
 
 export interface SessionState {
@@ -55,7 +57,7 @@ export interface SubmitKeyResponse {
   final_score?: number;
   completion_time?: string;
   stats?: {
-    total_prompts: number;
+    total_total_prompts: number;
     elapsed_minutes: number;
     failed_attempts: number;
   };

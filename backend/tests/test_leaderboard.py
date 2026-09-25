@@ -211,7 +211,7 @@ class TestLeaderboardEndpointIntegration(unittest.TestCase):
         data = resp.json()
         expected_keys = {
             "rank", "username", "current_level", "completed",
-            "final_score", "total_prompts", "total_chars", "duration_seconds",
+            "final_score", "total_prompts", "total_chars", "duration_seconds", "status",
         }
         for entry in data:
             self.assertEqual(set(entry.keys()), expected_keys)
