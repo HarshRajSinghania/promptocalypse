@@ -149,9 +149,15 @@ export async function submitKey(
   return (await res.json()) as SubmitKeyResponse
 }
 
-export async function fetchLeaderboard() {
-  // TODO: GET /api/leaderboard
-  throw new Error('Not implemented');
+export async function fetchLeaderboard(): Promise<import('../types').LeaderboardEntry[]> {
+  const res = await fetch(`${API_BASE}/leaderboard`);
+  if (!res.ok) {
+    const errorData = (await res.json().catch(() => ({}))) as {
+      detail?: string
+    }
+    throw new Error(errorData.detail || 'Failed to fetch leaderboard');
+  }
+  return (await res.json()) as import('../types').LeaderboardEntry[];
 }
 
 export async function fetchUserState(userId: string): Promise<User> {

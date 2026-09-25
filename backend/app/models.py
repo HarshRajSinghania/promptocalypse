@@ -69,6 +69,7 @@ class LeaderboardEntry(BaseModel):
     total_prompts: int
     total_chars: int
     duration_seconds: Optional[int] = None
+    status: str = "In Progress"
 
 
 class UserStateResponse(BaseModel):
