@@ -166,3 +166,21 @@ export async function fetchUserState(userId: string): Promise<User> {
   }
   return (await res.json()) as User
 }
+
+export interface ScenarioData {
+  level: number;
+  target: string;
+  scenario: string;
+  attack_vector: string;
+}
+
+export async function fetchScenario(level: number): Promise<ScenarioData> {
+  const res = await fetch(`${API_BASE}/scenario/${level}`);
+  if (!res.ok) {
+    const errorData = (await res.json().catch(() => ({}))) as {
+      detail?: string
+    }
+    throw new Error(errorData.detail || `Failed to fetch scenario for level ${level}`);
+  }
+  return (await res.json()) as ScenarioData;
+}
