@@ -101,6 +101,26 @@ export async function sendPrompt(
 
   const latencyMs = parseProcessTime(res.headers.get('X-Process-Time'))
 
+  if (res.status === 400) {
+    const errorData = (await res.json().catch(() => ({}))) as {
+      detail?: string
+    }
+    const detail = errorData.detail || ''
+    if (detail.includes('Ingress inspection')) {
+      return {
+        reply: detail,
+        status: 'blocked',
+        latencyMs,
+      }
+    }
+    const err = new Error(detail || 'Chat request failed with status 400') as Error & {
+      status?: number
+      detail?: string
+    }
+    err.status = 400
+    err.detail = detail
+    throw err
+  }
   if (res.status === 429) {
     throw new ChatPromptError('Rate limit active', 'rate_limit', {
       status: 429,

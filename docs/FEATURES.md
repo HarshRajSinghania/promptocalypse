@@ -68,7 +68,7 @@ This document provides a feature-by-feature functional decomposition of the plat
 [Client Cooldown Check (3.0s)]
         │
         ▼
-[Gateway Ingress Evaluator] ──► Level 2 Blacklist Match? ──► [Return 200 Intercept Banner]
+[Gateway Ingress Evaluator] ──► Level 2 Blacklist Match? ──► [Return 400 Intercept Banner]
         │ (No Match / Level != 2)                                (Prompt incremented)
         ▼
 [Groq Cloud Dispatch (llama-3.1-8b-instant)]
@@ -111,12 +111,10 @@ This document provides a feature-by-feature functional decomposition of the plat
      * The request short-circuits. It does **not** call the Groq API.
      * The backend writes to `prompt_ledger` with `is_firewall_blocked = 1` and `response_text = "[FIREWALL INTERCEPT]"`.
      * User metrics update: `total_prompts += 1` and `total_chars += len(prompt)`.
-     * Returns HTTP 200 with message payload:
+     * Returns HTTP 400 Bad Request:
        ```json
        {
-         "reply": "Firewall Alert: Ingress inspection detected prohibited keyword pattern.",
-         "status": "blocked",
-         "cooldown_seconds": 3.0
+         "detail": "Firewall Alert: Ingress inspection detected prohibited keyword pattern."
        }
        ```
   4. **Branch B (Clean Pattern):**

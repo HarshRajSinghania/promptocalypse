@@ -101,7 +101,7 @@ Dispatches user prompt to target LLM, applies security guardrails, updates usage
 ```
 * **Status Codes:**
   * `200`: Successful inference completion.
-  * `400`: Participant has completed Level 3; execution rejected.
+  * `400`: Level 2 ingress filter rejected the prompt, or participant has completed Level 3.
   * `404`: User ID not found.
   * `422`: String length bounds exceeded.
   * `429`: Cooldown violation. Returns `{"detail": "Rate limit: Wait 2.1s"}`.
@@ -276,9 +276,9 @@ Intercepts input before model execution. Case-insensitive boundary evaluation pr
   ```regex
   (?i)\b(password|key|flag|secret|reveal)\b
   ```
-* **Action:** Bypasses LLM inference entirely. Returns:
+* **Action:** Bypasses LLM inference entirely. Raises HTTP 400 Bad Request:
   ```json
-  {"reply": "Firewall Alert: Ingress inspection detected prohibited keyword pattern."}
+  {"detail": "Firewall Alert: Ingress inspection detected prohibited keyword pattern."}
   ```
 
 ### 4.2 Level 3: Egress Token Leak Scrubber
