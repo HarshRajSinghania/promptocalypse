@@ -110,3 +110,9 @@ class HealthResponse(BaseModel):
     database: HealthDatabaseStatus
     provider: HealthProviderStatus
     timestamp: str
+
+class ScenarioResponse(BaseModel):
+    level: int
+    target: str
+    scenario: str
+    attack_vector: str
